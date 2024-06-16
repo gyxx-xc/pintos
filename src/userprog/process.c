@@ -44,6 +44,9 @@ void userprog_init(void) {
 
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
+
+  t->pcb->fdt = calloc(sizeof(struct fdtable), 128);
+  t->pcb->fdt_count = 3; // the first 3 is not used
 }
 
 /* Starts a new thread running a user program loaded from
@@ -100,6 +103,41 @@ static void start_process(void* file_name_) {
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
     success = load(file_name, &if_.eip, &if_.esp);
+
+    // modified by me now
+    char** argv_ = malloc(100); // no 100, this is bad
+    int argc_;
+    int l = 0;
+    int esp_align = ((int)if_.esp) % 16;
+    for (int i = 0; i < (int)strlen(file_name); i ++) {
+      if (file_name[i] == ' ') {
+        file_name[i] = '\0';
+        if_.esp -= (i - l + 1);
+        memcpy((char*) if_.esp, file_name + l, sizeof(char) * (i - l + 1) );
+        argv_[argc_ ++] = (char*) if_.esp;
+      }
+    }
+    if_.esp -= (strlen(file_name) - l + 1);
+    memcpy((char*) if_.esp, file_name + l,
+           sizeof(char) * (strlen(file_name) - l + 1) );
+    argv_[argc_ ++] = (char*) if_.esp;
+    argv_[argc_] = 0;
+    // the argv data ends
+    while (((int)if_.esp) % 16 != esp_align)
+      *((char*)--if_.esp) = '\0';
+
+    if_.esp -= sizeof(char*) * (argc_ + 1);
+    memcpy(if_.esp, argv_, sizeof(char*) * (argc_ + 1)); // char*
+
+    if_.esp -= sizeof(void*);
+    *((void **)if_.esp) = if_.esp + sizeof(void*); // char** argv
+
+    if_.esp -= sizeof(int);
+    *((int*)if_.esp) = argc_; // argc
+
+    if_.esp -= sizeof(void*);
+    *((void **)if_.esp) = 0; // fake return
+    // this part of code is confuse and ugly...
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */

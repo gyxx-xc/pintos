@@ -27,6 +27,15 @@ struct process {
   uint32_t* pagedir;          /* Page directory. */
   char process_name[16];      /* Name of the main thread */
   struct thread* main_thread; /* Pointer to main thread */
+
+    /* mine */
+  struct fdtable* fdt;
+  int fdt_count;
+};
+
+struct fdtable {
+  int valid;
+  struct file* file_pointer;
 };
 
 void userprog_init(void);
