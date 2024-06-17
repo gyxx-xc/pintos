@@ -26,6 +26,7 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 
+// this pcb init is for main thread only.
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
    the first user process. Any additions to the PCB should be also
@@ -44,9 +45,6 @@ void userprog_init(void) {
 
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
-
-  t->pcb->fdt = calloc(sizeof(struct fdtable), 128);
-  t->pcb->fdt_count = 3; // the first 3 is not used
 }
 
 /* Starts a new thread running a user program loaded from
@@ -86,7 +84,7 @@ static void start_process(void* file_name_) {
 
   /* Initialize process control block */
   if (success) {
-    // Ensure that timer_interrupt() -> schedule() -> process_activate()
+    // Ensure that timer_interrunew_pcbpt() -> schedule() -> process_activate()
     // does not try to activate our uninitialized pagedir
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
