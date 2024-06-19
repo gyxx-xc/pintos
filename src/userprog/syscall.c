@@ -6,6 +6,7 @@
 #include "userprog/process.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "devices/shutdown.h"
 
 static void syscall_handler(struct intr_frame*);
 
@@ -21,37 +22,21 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
    * include it in your final submission.
    */
 
-  //printf("System call number: %d\n", args[0]);
-
-  if (args[0] == SYS_OPEN) {
-    struct file* file = filesys_open((char*)args[1]);
-    struct process* pcb = thread_current()->pcb;
-    pcb->fdt[pcb->fdt_count ++].file_pointer = file;
-    f->eax = 0;
-  }
-
-  if (args[0] == SYS_CLOSE) {
-
-  }
+  //printf("System call number: %s\n", args[2]);
 
   if (args[0] == SYS_WRITE) {
     int fd = args[1];
-    struct process* pcb = thread_current()->pcb;
-    if (fd < 0 || fd >= pcb->fdt_count) {
-      f->eax = -1;
-      return;
-    } else if (fd == 1) {
+    if (fd == 1) {
       putbuf((void*)args[2], args[3]);
-    } else {
-      struct fdtable fdt = thread_current()->pcb->fdt[fd];
-      if (!fdt.valid) {
-        f->eax = -1;
-        return;
-      }
-      file_deny_write(fdt.file_pointer);
-      file_write(fdt.file_pointer, (char*)args[2], 0);
-      file_allow_write(fdt.file_pointer);
     }
+  }
+
+  if (args[0] == SYS_PRACTICE) {
+    f->eax = args[1] + 1;
+  }
+
+  if (args[0] == SYS_HALT) {
+    shutdown_power_off();
   }
 
   if (args[0] == SYS_EXIT) {

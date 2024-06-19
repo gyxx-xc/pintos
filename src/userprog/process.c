@@ -77,6 +77,21 @@ static void start_process(void* file_name_) {
   struct thread* t = thread_current();
   struct intr_frame if_;
   bool success, pcb_success, fdt_success;
+  int file_name_len = strlen(file_name);
+  int argc_ = 0;
+
+  // very simple automechine
+  bool prev = false;
+  for (int i = 0; i < file_name_len; i++) {
+    if (file_name[i] == ' ') {
+      file_name[i] = '\0';
+      prev = false;
+    } else {
+      if (!prev)
+        argc_ ++;
+      prev = true;
+    }
+  }
 
   /* Allocate process control block */
   struct process* new_pcb = malloc(sizeof(struct process));
@@ -91,11 +106,12 @@ static void start_process(void* file_name_) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    strlcpy(t->pcb->process_name, t->name, sizeof t->name);
+    strlcpy(t->pcb->process_name, file_name, sizeof t->pcb->process_name);
 
     // mine: init the fd table
+    // TODO: review needed
     t->pcb->fdt = malloc(sizeof(struct fdtable) * 128);
-    success = fdt_success = f->pcb->fdt != NULL;
+    success = fdt_success = t->pcb->fdt != NULL;
     t->pcb->fdt_count = 3; // the first 3 fd is reserved
   }
 
@@ -105,43 +121,52 @@ static void start_process(void* file_name_) {
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    success = load(file_name, &if_.eip, &if_.esp);
 
-    // mine: set the args of main
-    // TODO: make it better
-    char** argv_ = malloc(100); // no 100, this is bad
-    int argc_;
-    int l = 0;
-    int esp_align = ((int)if_.esp) % 16;
-    for (int i = 0; i < (int)strlen(file_name); i ++) {
-      if (file_name[i] == ' ') {
-        file_name[i] = '\0';
-        if_.esp -= (i - l + 1);
-        memcpy((char*) if_.esp, file_name + l, sizeof(char) * (i - l + 1) );
-        argv_[argc_ ++] = (char*) if_.esp;
+    success = load(file_name, &if_.eip, &if_.esp);
+  }
+
+  if (success) {
+    /*
+                                          00 00 00 00 |            ....|
+      04 00 00 00 d8 ff ff bf-ed ff ff bf f5 ff ff bf |................|
+      f8 ff ff bf fc ff ff bf-00 00 00 00 00 2f 62 69 |............./bi|
+      6e 2f 6c 73 00 2d 6c 00-66 6f 6f 00 62 61 72 00 |n/ls.-l.foo.bar.|
+    */
+    if_.esp -= file_name_len + 1;
+    char* file_name_data = if_.esp;
+    memcpy(if_.esp, file_name, file_name_len + 1);
+    // stack align
+    while((int)(if_.esp - (argc_+3)*4) & 15)
+      *(char*)(-- if_.esp) = 0;
+    // argv[argc] = 0
+    if_.esp -= 4;
+    *(char**)if_.esp = 0;
+
+    // argv
+    if_.esp -= 4*argc_;
+    prev = false;
+    for (int i = 0; i < file_name_len; i ++) {
+      if (file_name_data[i] != '\0') {
+        if (!prev) {
+          *(char**)if_.esp = file_name_data + i;
+          if_.esp += 4;
+        }
+        prev = true;
+      } else {
+        prev = false;
       }
     }
-    if_.esp -= (strlen(file_name) - l + 1);
-    memcpy((char*) if_.esp, file_name + l,
-           sizeof(char) * (strlen(file_name) - l + 1) );
-    argv_[argc_ ++] = (char*) if_.esp;
-    argv_[argc_] = 0;
-    // the argv data ends
-    while (((int)if_.esp) % 16 != esp_align)
-      *((char*)--if_.esp) = '\0';
+    if_.esp -= 4*argc_;
+    // argv*
+    if_.esp -= 4;
+    *(char***)if_.esp = if_.esp + 4;
 
-    if_.esp -= sizeof(char*) * (argc_ + 1);
-    memcpy(if_.esp, argv_, sizeof(char*) * (argc_ + 1)); // char*
-
-    if_.esp -= sizeof(void*);
-    *((void **)if_.esp) = if_.esp + sizeof(void*); // char** argv
-
-    if_.esp -= sizeof(int);
-    *((int*)if_.esp) = argc_; // argc
-
-    if_.esp -= sizeof(void*);
-    *((void **)if_.esp) = 0; // fake return
-    // this part of code is confuse and ugly...
+    // argc
+    if_.esp -= 4;
+    *(int*)if_.esp = argc_;
+    // fake return address
+    if_.esp -= 4;
+    *(int*)if_.esp = 0;
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
@@ -206,12 +231,12 @@ void process_exit(void) {
   pd = cur->pcb->pagedir;
   if (pd != NULL) {
     /* Correct ordering here is crucial.  We must set
-         cur->pcb->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
+       cur->pcb->pagedir to NULL before switching page directories,
+       so that a timer interrupt can't switch back to the
+       process page directory.  We must activate the base page
+       directory before destroying the process's page
+       directory, or our active page directory will be one
+       that's been freed (and cleared). */
     cur->pcb->pagedir = NULL;
     pagedir_activate(NULL);
     pagedir_destroy(pd);
@@ -357,40 +382,40 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
       goto done;
     file_ofs += sizeof phdr;
     switch (phdr.p_type) {
-      case PT_NULL:
-      case PT_NOTE:
-      case PT_PHDR:
-      case PT_STACK:
-      default:
-        /* Ignore this segment. */
-        break;
-      case PT_DYNAMIC:
-      case PT_INTERP:
-      case PT_SHLIB:
-        goto done;
-      case PT_LOAD:
-        if (validate_segment(&phdr, file)) {
-          bool writable = (phdr.p_flags & PF_W) != 0;
-          uint32_t file_page = phdr.p_offset & ~PGMASK;
-          uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
-          uint32_t page_offset = phdr.p_vaddr & PGMASK;
-          uint32_t read_bytes, zero_bytes;
-          if (phdr.p_filesz > 0) {
-            /* Normal segment.
-                     Read initial part from disk and zero the rest. */
-            read_bytes = page_offset + phdr.p_filesz;
-            zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes);
-          } else {
-            /* Entirely zero.
-                     Don't read anything from disk. */
-            read_bytes = 0;
-            zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
-          }
-          if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable))
-            goto done;
-        } else
+    case PT_NULL:
+    case PT_NOTE:
+    case PT_PHDR:
+    case PT_STACK:
+    default:
+      /* Ignore this segment. */
+      break;
+    case PT_DYNAMIC:
+    case PT_INTERP:
+    case PT_SHLIB:
+      goto done;
+    case PT_LOAD:
+      if (validate_segment(&phdr, file)) {
+        bool writable = (phdr.p_flags & PF_W) != 0;
+        uint32_t file_page = phdr.p_offset & ~PGMASK;
+        uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
+        uint32_t page_offset = phdr.p_vaddr & PGMASK;
+        uint32_t read_bytes, zero_bytes;
+        if (phdr.p_filesz > 0) {
+          /* Normal segment.
+             Read initial part from disk and zero the rest. */
+          read_bytes = page_offset + phdr.p_filesz;
+          zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes);
+        } else {
+          /* Entirely zero.
+             Don't read anything from disk. */
+          read_bytes = 0;
+          zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
+        }
+        if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable))
           goto done;
-        break;
+      } else
+        goto done;
+      break;
     }
   }
 
@@ -403,7 +428,7 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
 
   success = true;
 
-done:
+ done:
   /* We arrive here whether the load is successful or not. */
   file_close(file);
   return success;
