@@ -29,8 +29,7 @@ struct process {
   struct thread* main_thread; /* Pointer to main thread */
 
     /* mine */
-  struct fdtable* fdt;
-  int fdt_count;
+
 };
 
 struct fdtable {

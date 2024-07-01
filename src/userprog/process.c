@@ -76,7 +76,7 @@ static void start_process(void* file_name_) {
   char* file_name = (char*)file_name_;
   struct thread* t = thread_current();
   struct intr_frame if_;
-  bool success, pcb_success, fdt_success;
+  bool success, pcb_success;
   int file_name_len = strlen(file_name);
   int argc_ = 0;
 
@@ -109,10 +109,6 @@ static void start_process(void* file_name_) {
     strlcpy(t->pcb->process_name, file_name, sizeof t->pcb->process_name);
 
     // mine: init the fd table
-    // TODO: review needed
-    t->pcb->fdt = malloc(sizeof(struct fdtable) * 128);
-    success = fdt_success = t->pcb->fdt != NULL;
-    t->pcb->fdt_count = 3; // the first 3 fd is reserved
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -174,8 +170,6 @@ static void start_process(void* file_name_) {
     // Avoid race where PCB is freed before t->pcb is set to NULL
     // If this happens, then an unfortuantely timed timer interrupt
     // can try to activate the pagedir, but it is now freed memory
-    if (fdt_success)
-      free(t->pcb->fdt);
     struct process* pcb_to_free = t->pcb;
     t->pcb = NULL;
     free(pcb_to_free);
@@ -222,9 +216,6 @@ void process_exit(void) {
     thread_exit();
     NOT_REACHED();
   }
-
-  free(cur->pcb->fdt);
-  cur->pcb->fdt = NULL;
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */

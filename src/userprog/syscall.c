@@ -12,7 +12,7 @@ static void syscall_handler(struct intr_frame*);
 
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 
-static void syscall_handler(struct intr_frame* f UNUSED) {
+static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = ((uint32_t*)f->esp);
 
   /*
@@ -22,26 +22,40 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
    * include it in your final submission.
    */
 
-  //printf("System call number: %s\n", args[2]);
+  /* printf("System call number: %d\n", args[0]); */
+
+  if (args[0] == SYS_WAIT) {
+    f->eax = process_wait(args[1]);
+    return;
+  }
+
+  if (args[0] == SYS_EXEC) {
+    f->eax = process_execute((const char*)args[1]);
+    return;
+  }
 
   if (args[0] == SYS_WRITE) {
     int fd = args[1];
     if (fd == 1) {
       putbuf((void*)args[2], args[3]);
     }
+    return;
   }
 
   if (args[0] == SYS_PRACTICE) {
     f->eax = args[1] + 1;
+    return;
   }
 
   if (args[0] == SYS_HALT) {
     shutdown_power_off();
+    return;
   }
 
   if (args[0] == SYS_EXIT) {
     f->eax = args[1];
     printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
     process_exit();
+    return;
   }
 }
