@@ -2,8 +2,8 @@
 #define USERPROG_PROCESS_H
 
 #include "threads/thread.h"
+#include "lib/kernel/list.h"
 #include <stdint.h>
-
 // At most 8MB can be allocated to the stack
 // These defines will be used in Project 2: Multithreading
 #define MAX_STACK_PAGES (1 << 11)
@@ -17,6 +17,11 @@ typedef tid_t pid_t;
 typedef void (*pthread_fun)(void*);
 typedef void (*stub_fun)(pthread_fun, void*);
 
+struct child_list_elem {
+  struct process* process;
+  struct list_elem elem;
+};
+
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate
    PCB from the TCB. All TCBs in a process will have a pointer
@@ -28,8 +33,15 @@ struct process {
   char process_name[16];      /* Name of the main thread */
   struct thread* main_thread; /* Pointer to main thread */
 
-    /* mine */
+  /* mine */
+  struct semaphore child_load; // only one child is load one time
+  bool load_success;           // so only need one bool?
+  struct semaphore exited;
+  int exit_status;
 
+  struct process* parent;
+  struct list children;
+  struct child_list_elem self_list_elem;
 };
 
 struct fdtable {
@@ -41,7 +53,7 @@ void userprog_init(void);
 
 pid_t process_execute(const char* file_name);
 int process_wait(pid_t);
-void process_exit(void);
+void process_exit(int exit_status);
 void process_activate(void);
 
 bool is_main_thread(struct thread*, struct process*);

@@ -24,15 +24,25 @@ static void syscall_handler(struct intr_frame* f) {
 
   /* printf("System call number: %d\n", args[0]); */
   switch (args[0]){
-  case SYS_WAIT:
-    f->eax = process_wait(args[1]);
+  case SYS_HALT: // 0
+    shutdown_power_off();
     break;
 
-  case SYS_EXEC:
+  case SYS_EXIT: // 1
+    f->eax = args[1];
+    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
+    process_exit(args[1]);
+    break;
+
+  case SYS_EXEC: // 2
     f->eax = process_execute((const char*)args[1]);
     break;
 
-  case SYS_WRITE:
+  case SYS_WAIT: // 3
+    f->eax = process_wait(args[1]);
+    break;
+
+  case SYS_WRITE: // 9
     int fd = args[1];
     if (fd == 1) {
       putbuf((void*)args[2], args[3]);
@@ -41,16 +51,6 @@ static void syscall_handler(struct intr_frame* f) {
 
   case SYS_PRACTICE:
     f->eax = args[1] + 1;
-    break;
-
-  case SYS_HALT:
-    shutdown_power_off();
-    break;
-
-  case SYS_EXIT:
-    f->eax = args[1];
-    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
-    process_exit();
     break;
   }
 }
