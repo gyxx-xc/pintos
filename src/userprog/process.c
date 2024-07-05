@@ -135,7 +135,7 @@ static void start_process(void* list) {
 
     sema_init(&t->pcb->exited, 0);
 
-    // mine: init the fd table
+    t->pcb->fd_count = 2;
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -634,6 +634,18 @@ bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread
 
 /* Gets the PID of a process */
 pid_t get_pid(struct process* p) { return (pid_t)p->pid; }
+
+/* Gets the file of a process by the given fd */
+struct file* get_file(struct process* pcb, int fd){
+  if (fd == 0 || fd == 1)
+    return NULL;
+  if (fd > pcb->fd_count)
+    return NULL;
+  struct fdtable* fdt = &pcb->fdt[fd];
+  if (!fdt->valid)
+    return NULL;
+  return fdt->file_pointer;
+}
 
 /* Creates a new stack for the thread and sets up its arguments.
    Stores the thread's entry point into *EIP and its initial stack

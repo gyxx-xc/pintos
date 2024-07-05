@@ -22,6 +22,11 @@ struct child_list_elem {
   struct list_elem elem;
 };
 
+struct fdtable {
+  bool valid;
+  struct file* file_pointer;
+};
+
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate
    PCB from the TCB. All TCBs in a process will have a pointer
@@ -44,11 +49,9 @@ struct process {
   struct process* parent;
   struct list children;
   struct child_list_elem self_list_elem;
-};
 
-struct fdtable {
-  int valid;
-  struct file* file_pointer;
+  struct fdtable fdt[128];
+  int fd_count;
 };
 
 void userprog_init(void);
@@ -60,6 +63,7 @@ void process_activate(void);
 
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);
+struct file* get_file(struct process* pcb, int fd);
 
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
 tid_t pthread_join(tid_t);
