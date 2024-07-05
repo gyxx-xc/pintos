@@ -135,7 +135,7 @@ static void syscall_handler(struct intr_frame* f) {
     sema_up(&file_lock);
     break;
 
-  case SYS_PRACTICE:
+  case SYS_PRACTICE: // who cares this number...
     f->eax = args[1] + 1;
     break;
   }
