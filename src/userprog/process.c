@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -41,6 +42,8 @@ void userprog_init(void) {
      can come at any time and activate our pagedir */
   t->pcb = calloc(sizeof(struct process), 1);
   success = t->pcb != NULL;
+
+  sema_init(&file_lock, 1);
 
   if (success){
     list_init(&t->pcb->children);
@@ -123,6 +126,7 @@ static void start_process(void* list) {
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
     strlcpy(t->pcb->process_name, file_name, sizeof t->pcb->process_name);
+    t->pcb->pid = t->tid;
 
     t->pcb->parent = parent->pcb;
     list_init(&t->pcb->children);
@@ -193,10 +197,10 @@ static void start_process(void* list) {
     // Avoid race where PCB is freed before t->pcb is set to NULL
     // If this happens, then an unfortuantely timed timer interrupt
     // can try to activate the pagedir, but it is now freed memory
+    list_pop_back(&parent->pcb->children);
     struct process* pcb_to_free = t->pcb;
     t->pcb = NULL;
     free(pcb_to_free);
-    list_pop_back(&parent->pcb->children);
   }
 
   /* Clean up. Exit on failure or jump to userspace */
@@ -204,7 +208,6 @@ static void start_process(void* list) {
   if (!success) {
     parent->pcb->load_success = false;
     sema_up(&parent->pcb->child_load);
-    sema_up(&t->pcb->exited);
     thread_exit();
   }
 
@@ -630,7 +633,7 @@ static bool install_page(void* upage, void* kpage, bool writable) {
 bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread == t; }
 
 /* Gets the PID of a process */
-pid_t get_pid(struct process* p) { return (pid_t)p->main_thread->tid; }
+pid_t get_pid(struct process* p) { return (pid_t)p->pid; }
 
 /* Creates a new stack for the thread and sets up its arguments.
    Stores the thread's entry point into *EIP and its initial stack

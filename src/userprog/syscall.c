@@ -42,6 +42,18 @@ static void syscall_handler(struct intr_frame* f) {
     f->eax = process_wait(args[1]);
     break;
 
+  case SYS_CREATE: // 4
+    sema_down(file_lock);
+    f->eax = filesys_create((char*)args[1], args[2]);
+    sema_up(file_lock);
+    break;
+
+  case SYS_REMOVE: // 5
+    sema_down(file_lock);
+    f->eax = filesys_remove((char*)args[1]);
+    sema_up(file_lock);
+    break;
+
   case SYS_WRITE: // 9
     int fd = args[1];
     if (fd == 1) {

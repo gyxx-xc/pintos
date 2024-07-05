@@ -34,6 +34,8 @@ struct process {
   struct thread* main_thread; /* Pointer to main thread */
 
   /* mine */
+  pid_t pid;                   // this is because thread might be
+                               // freed before process
   struct semaphore child_load; // only one child is load one time
   bool load_success;           // so only need one bool?
   struct semaphore exited;
