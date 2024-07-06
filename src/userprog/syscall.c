@@ -124,6 +124,30 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     }
 
+  case SYS_SEEK: // 10
+    fd = args[1];
+    file = get_file(thread_current()->pcb, fd);
+    if (file == NULL) {
+      f->eax = -1;
+      break;
+    }
+    sema_down(&file_lock);
+    file_seek(file, args[2]);
+    sema_up(&file_lock);
+    break;
+
+  case SYS_TELL: // 11
+    fd = args[1];
+    file = get_file(thread_current()->pcb, fd);
+    if (file == NULL) {
+      f->eax = -1;
+      break;
+    }
+    sema_down(&file_lock);
+    f->eax = file_tell(file);
+    sema_up(&file_lock);
+    break;
+
   case SYS_CLOSE: // 12
     fd = args[1];
     file = get_file(thread_current()->pcb, fd);
