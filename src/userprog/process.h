@@ -46,6 +46,8 @@ struct process {
   struct semaphore exited;
   int exit_status;
 
+  struct file* file;
+
   struct process* parent;
   struct list children;
   struct child_list_elem self_list_elem;

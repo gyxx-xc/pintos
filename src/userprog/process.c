@@ -12,6 +12,7 @@
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/inode.h"
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
@@ -294,6 +295,8 @@ void process_exit(int exit_status) {
     }
   }
 
+  file_close(cur->pcb->file); // close & unlock self
+
   sema_up(&cur->pcb->exited);
   cur->pcb->exit_status = exit_status;
 
@@ -420,6 +423,10 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
     goto done;
   }
 
+  // lock the file
+  file_deny_write(file);
+  t->pcb->file = file;
+
   /* Read and verify executable header. */
   if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
       memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 3 ||
@@ -489,7 +496,6 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close(file);
   return success;
 }
 
