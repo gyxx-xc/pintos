@@ -51,6 +51,8 @@ struct intr_frame {
   uint32_t eflags;   /* Saved CPU flags. */
   void* esp;         /* Saved stack pointer. */
   uint16_t ss, : 16; /* Data segment for esp. */
+
+  // maybe saving the fpu here
 };
 
 typedef void intr_handler_func(struct intr_frame*);

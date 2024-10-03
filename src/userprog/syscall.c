@@ -203,6 +203,11 @@ static void syscall_handler(struct intr_frame* f) {
     check_args(args, 1);
     f->eax = args[1] + 1;
     return;
+
+  case SYS_COMPUTE_E: // and also this one
+    check_args(args, 1);
+    f->eax = sys_sum_to_e(args[1]);
+    return;
   }
 
   // other case including:
