@@ -103,6 +103,9 @@ int main(void) {
   gdt_init();
 #endif
 
+  /* floating points */
+  asm("finit":);
+
   /* Initialize interrupt handlers. */
   intr_init();
   timer_init();
