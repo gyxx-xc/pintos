@@ -10,6 +10,7 @@
 #include "devices/input.h"
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "lib/float.h"
 
 struct semaphore file_lock;
 
