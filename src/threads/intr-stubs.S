@@ -23,6 +23,8 @@ intr_entry:
 	pushl %fs
 	pushl %gs
 	pushal
+        # subl $108, %esp
+        # fsave (%esp)
 
 	/* Set up kernel environment. */
 	cld			/* String instructions go upward. */
@@ -50,6 +52,8 @@ intr_entry:
 .func intr_exit
 intr_exit:
 	/* Restore caller's registers. */
+        # frstor (%esp)
+        # addl $108, %esp
 	popal
 	popl %gs
 	popl %fs

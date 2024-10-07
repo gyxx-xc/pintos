@@ -52,7 +52,8 @@ struct intr_frame {
   void* esp;         /* Saved stack pointer. */
   uint16_t ss, : 16; /* Data segment for esp. */
 
-  // maybe saving the fpu here
+  // saving the fpu here
+  /* uint8_t fpu[108]; */
 };
 
 typedef void intr_handler_func(struct intr_frame*);
