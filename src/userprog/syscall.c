@@ -23,6 +23,7 @@ static bool check_user_string (const char*);
 static bool check_user_buff(const uint8_t*, off_t);
 static void put_user_buff(const uint8_t*, uint8_t*, off_t);
 
+static bool check_user32(const uint32_t*);
 static bool check_args(uint32_t*, int);
 
 static void kill_process(void);
@@ -39,13 +40,7 @@ static void syscall_handler(struct intr_frame* f) {
    * include it in your final submission.
    */
 
-  if (get_user((uint8_t*)args) == -1)
-    kill_process();
-  if (get_user((uint8_t*)args+1) == -1)
-    kill_process();
-  if (get_user((uint8_t*)args+2) == -1)
-    kill_process();
-  if (get_user((uint8_t*)args+3) == -1)
+  if (!check_user32(args))
     kill_process();
 
   /* printf("System call number: %d\n", args[0]); */
@@ -262,15 +257,17 @@ static void put_user_buff(const uint8_t* output, uint8_t* buff, off_t size){
       kill_process();
 }
 
+static bool check_user32(const uint32_t *uaddr) {
+  return (get_user((uint8_t*)uaddr) != -1) &&
+    (get_user((uint8_t*)uaddr+1) != -1) &&
+    (get_user((uint8_t*)uaddr+2) != -1) &&
+    (get_user((uint8_t*)uaddr+3) != -1);
+}
+
 static bool check_args(uint32_t* args, int argc) {
   for (int i = 0; i < argc; i ++){
-    if (get_user((void*)(++args)) == -1)
-      kill_process();
-    if (get_user((uint8_t*)args+1) == -1)
-      kill_process();
-    if (get_user((uint8_t*)args+2) == -1)
-      kill_process();
-    if (get_user((uint8_t*)args+3) == -1)
+    // four if for a 32bit args
+    if (!check_user32((void*)(++args)))
       kill_process();
   }
   return true;
