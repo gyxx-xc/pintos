@@ -136,7 +136,7 @@ static void start_process(void* list) {
 
     sema_init(&t->pcb->exited, 0);
 
-    t->pcb->fd_count = 2;
+    t->pcb->fd_count = 1;
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -149,6 +149,7 @@ static void start_process(void* list) {
     success = load(file_name, &if_.eip, &if_.esp);
   }
 
+  /* setup function call stack (args) for main */
   if (success) {
     /*
                                           00 00 00 00 |            ....|
@@ -287,17 +288,26 @@ void process_exit(int exit_status) {
     pagedir_destroy(pd);
   }
 
-  // free all the child pcb not waited yet
+  // free all the child pcb notx waited yet
   struct list* c = &cur->pcb->children;
   if (!list_empty(c)) {
     for (struct list_elem* e = list_begin(c); e != NULL; e = list_remove(e)) {
       struct child_list_elem* c_elem = list_entry(e, struct child_list_elem, elem);
       if (sema_try_down(&c_elem->process->exited)) {
-        free(c_elem);
+        free(c_elem->process);
       } else {
         c_elem->process->parent = NULL;
       }
       free(e);
+    }
+  }
+
+  // free all fdt not free yet
+  for (int i = 1; i <= cur->pcb->fd_count; i ++) {
+    struct file* file = get_file(cur->pcb, i);
+    if (file != NULL) {
+      cur->pcb->fdt[i].valid = false;
+      file_close(file);
     }
   }
 
