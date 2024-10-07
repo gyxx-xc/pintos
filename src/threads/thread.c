@@ -205,6 +205,8 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   sf = alloc_frame(t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
+  uint8_t tmp[108];
+  asm("fsave (%0); finit; fsave (%1); frstor (%0)"::"g"(&tmp), "g"(&(sf->fpu)));
 
   /* Add to run queue. */
   thread_unblock(t);

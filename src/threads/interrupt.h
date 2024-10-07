@@ -19,6 +19,7 @@ enum intr_level intr_disable(void);
 struct intr_frame {
   /* Pushed by intr_entry in intr-stubs.S.
        These are the interrupted task's saved registers. */
+  uint8_t fpu[108];   /* Saved fpu stack */
   uint32_t edi;       /* Saved EDI. */
   uint32_t esi;       /* Saved ESI. */
   uint32_t ebp;       /* Saved EBP. */
@@ -51,9 +52,6 @@ struct intr_frame {
   uint32_t eflags;   /* Saved CPU flags. */
   void* esp;         /* Saved stack pointer. */
   uint16_t ss, : 16; /* Data segment for esp. */
-
-  // saving the fpu here
-  /* uint8_t fpu[108]; */
 };
 
 typedef void intr_handler_func(struct intr_frame*);

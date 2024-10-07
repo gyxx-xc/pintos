@@ -193,6 +193,12 @@ static void start_process(void* list) {
     *(int*)if_.esp = 0;
   }
 
+  /* fpu init (load from thread) */
+  if (success) {
+    // since the fpu is init from the thread already
+    asm("fsave (%0)"::"g"(&if_.fpu));
+  }
+
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {
     // Avoid race where PCB is freed before t->pcb is set to NULL
