@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "devices/timer.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -23,6 +24,9 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list fifo_ready_list;
+
+/* List of processes in THREAD_BLOCK state*/
+static struct list wait_block_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -108,6 +112,7 @@ void thread_init(void) {
 
   lock_init(&tid_lock);
   list_init(&fifo_ready_list);
+  list_init(&wait_block_list);
   list_init(&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -210,7 +215,7 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
 
   /* Add to run queue. */
   thread_unblock(t);
-
+  thread_yield();
   return tid;
 }
 
@@ -230,14 +235,22 @@ void thread_block(void) {
 
 /* Places a thread on the ready structure appropriate for the
    current active scheduling policy.
-   
+
    This function must be called with interrupts turned off. */
+
+static bool priority_less_func(const struct list_elem* elem,
+                       const struct list_elem* ins, UNUSED void* aux)
+{return list_entry(elem, struct thread, elem)->priority
+    > list_entry(ins, struct thread, elem)->priority;}
 static void thread_enqueue(struct thread* t) {
   ASSERT(intr_get_level() == INTR_OFF);
   ASSERT(is_thread(t));
 
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
+  else if (active_sched_policy == SCHED_PRIO) {
+    list_insert_ordered(&fifo_ready_list, &t->elem, priority_less_func, NULL);
+  }
   else
     PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
@@ -316,6 +329,23 @@ void thread_yield(void) {
   intr_set_level(old_level);
 }
 
+static bool wait_time_less_func(const struct list_elem* elem,
+                         const struct list_elem* ins, UNUSED void* aux)
+{return list_entry(elem, struct thread, elem)->wakeup_ticks
+    < list_entry(ins, struct thread, elem)->wakeup_ticks;}
+void thread_sleep(int wakeup_ticks) {
+  struct thread* t = thread_current();
+  enum intr_level old_level;
+
+  ASSERT(!intr_context());
+
+  old_level = intr_disable();
+  t->wakeup_ticks = wakeup_ticks;
+  list_insert_ordered(&wait_block_list, &t->elem, wait_time_less_func, NULL);
+  thread_block();
+  intr_set_level(old_level);
+}
+
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
 void thread_foreach(thread_action_func* func, void* aux) {
@@ -330,7 +360,7 @@ void thread_foreach(thread_action_func* func, void* aux) {
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
-void thread_set_priority(int new_priority) { thread_current()->priority = new_priority; }
+void thread_set_priority(int new_priority) { thread_current()->priority = new_priority; thread_yield(); }
 
 /* Returns the current thread's priority. */
 int thread_get_priority(void) { return thread_current()->priority; }
@@ -459,7 +489,11 @@ static struct thread* thread_schedule_fifo(void) {
 
 /* Strict priority scheduler */
 static struct thread* thread_schedule_prio(void) {
-  PANIC("Unimplemented scheduler policy: \"-sched=prio\"");
+  /* PANIC("Unimplemented scheduler policy: \"-sched=prio\""); */
+  if (!list_empty(&fifo_ready_list))
+    return list_entry(list_pop_front(&fifo_ready_list), struct thread, elem);
+  else
+    return idle_thread;
 }
 
 /* Fair priority scheduler */
@@ -530,6 +564,20 @@ void thread_switch_tail(struct thread* prev) {
   }
 }
 
+static void unblock_wait_threads(void) {
+  struct thread* t;
+  while (!list_empty(&wait_block_list)){
+    t = list_entry(list_begin(&wait_block_list),
+                   struct thread, elem);
+    /* if this (or later) thread need wait longer */
+    if (t->wakeup_ticks > timer_ticks()) break;
+
+    /* pop the thread to ready queue */
+    list_pop_front(&wait_block_list);
+    thread_unblock(t);
+  }
+}
+
 /* Schedules a new thread.  At entry, interrupts must be off and
    the running process's state must have been changed from
    running to some other state.  This function finds another
@@ -539,6 +587,7 @@ void thread_switch_tail(struct thread* prev) {
    has completed. */
 static void schedule(void) {
   struct thread* cur = running_thread();
+  unblock_wait_threads();
   struct thread* next = next_thread_to_run();
   struct thread* prev = NULL;
 

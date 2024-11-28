@@ -91,12 +91,15 @@ struct thread {
   struct list_elem allelem;  /* List element for all threads list. */
 
   /* Shared between thread.c and synch.c. */
+  /* and also the wait_block */
   struct list_elem elem; /* List element. */
 
 #ifdef USERPROG
   /* Owned by process.c. */
   struct process* pcb; /* Process control block if this thread is a userprog */
 #endif
+
+  int64_t wakeup_ticks;
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
@@ -136,6 +139,7 @@ const char* thread_name(void);
 
 void thread_exit(void) NO_RETURN;
 void thread_yield(void);
+void thread_sleep(int wakeup_ticks);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func(struct thread* t, void* aux);
