@@ -155,6 +155,7 @@ void sema_up(sema_t* sema) {
   bool success = syscall1(SYS_SEMA_UP, sema);
   if (!success)
     exit(1);
+  thread_yield();
 }
 
 tid_t get_tid(void) { return syscall0(SYS_GET_TID); }

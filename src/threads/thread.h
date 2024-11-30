@@ -145,6 +145,9 @@ void thread_sleep(int wakeup_ticks);
 typedef void thread_action_func(struct thread* t, void* aux);
 void thread_foreach(thread_action_func*, void*);
 
+bool priority_less_func(const struct list_elem* elem,
+                       const struct list_elem* ins, UNUSED void* aux);
+
 int thread_get_priority(void);
 void thread_set_priority(int);
 

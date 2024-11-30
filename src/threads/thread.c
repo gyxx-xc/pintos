@@ -238,7 +238,7 @@ void thread_block(void) {
 
    This function must be called with interrupts turned off. */
 
-static bool priority_less_func(const struct list_elem* elem,
+bool priority_less_func(const struct list_elem* elem,
                        const struct list_elem* ins, UNUSED void* aux)
 {return list_entry(elem, struct thread, elem)->priority
     > list_entry(ins, struct thread, elem)->priority;}

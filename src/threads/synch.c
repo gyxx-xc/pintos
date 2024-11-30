@@ -63,7 +63,8 @@ void sema_down(struct semaphore* sema) {
 
   old_level = intr_disable();
   while (sema->value == 0) {
-    list_push_back(&sema->waiters, &thread_current()->elem);
+    /* list_push_back(&sema->waiters, &thread_current()->elem); */
+    list_insert_ordered(&sema->waiters, &thread_current()->elem, priority_less_func, NULL);
     thread_block();
   }
   sema->value--;
@@ -98,14 +99,21 @@ bool sema_try_down(struct semaphore* sema) {
    This function may be called from an interrupt handler. */
 void sema_up(struct semaphore* sema) {
   enum intr_level old_level;
+  struct thread* t = NULL;
 
   ASSERT(sema != NULL);
 
   old_level = intr_disable();
-  if (!list_empty(&sema->waiters))
-    thread_unblock(list_entry(list_pop_front(&sema->waiters), struct thread, elem));
   sema->value++;
+  if (!list_empty(&sema->waiters)){
+    t = list_entry(list_pop_front(&sema->waiters), struct thread, elem);
+    thread_unblock(t);
+  }
   intr_set_level(old_level);
+  if (!intr_context()) // we don't need it when intr, right?
+    if (t != NULL && t->priority > thread_current()->priority){
+      thread_yield();
+    }
 }
 
 static void sema_test_helper(void* sema_);
@@ -280,6 +288,7 @@ void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
 struct semaphore_elem {
   struct list_elem elem;      /* List element. */
   struct semaphore semaphore; /* This semaphore. */
+  int priority;
 };
 
 /* Initializes condition variable COND.  A condition variable
@@ -311,6 +320,10 @@ void cond_init(struct condition* cond) {
    interrupt handler.  This function may be called with
    interrupts disabled, but interrupts will be turned back on if
    we need to sleep. */
+static bool waiter_less_func(const struct list_elem* elem,
+                             const struct list_elem* ins, UNUSED void* aux)
+{return list_entry(elem, struct semaphore_elem, elem)->priority
+    > list_entry(ins, struct semaphore_elem, elem)->priority;}
 void cond_wait(struct condition* cond, struct lock* lock) {
   struct semaphore_elem waiter;
 
@@ -320,7 +333,8 @@ void cond_wait(struct condition* cond, struct lock* lock) {
   ASSERT(lock_held_by_current_thread(lock));
 
   sema_init(&waiter.semaphore, 0);
-  list_push_back(&cond->waiters, &waiter.elem);
+  waiter.priority = thread_current()->priority;
+  list_insert_ordered(&cond->waiters, &waiter.elem, waiter_less_func, NULL);
   lock_release(lock);
   sema_down(&waiter.semaphore);
   lock_acquire(lock);
