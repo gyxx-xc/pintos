@@ -100,6 +100,8 @@ struct thread {
 #endif
 
   int64_t wakeup_ticks;
+  struct lock* wait_lock;
+  struct list acquired_locks;
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
@@ -148,6 +150,7 @@ void thread_foreach(thread_action_func*, void*);
 bool priority_less_func(const struct list_elem* elem,
                        const struct list_elem* ins, UNUSED void* aux);
 
+int thread_help_get_priority(struct thread*);
 int thread_get_priority(void);
 void thread_set_priority(int);
 

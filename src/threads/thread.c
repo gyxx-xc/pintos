@@ -240,8 +240,8 @@ void thread_block(void) {
 
 bool priority_less_func(const struct list_elem* elem,
                        const struct list_elem* ins, UNUSED void* aux)
-{return list_entry(elem, struct thread, elem)->priority
-    > list_entry(ins, struct thread, elem)->priority;}
+{return thread_help_get_priority(list_entry(elem, struct thread, elem))
+    > thread_help_get_priority(list_entry(ins, struct thread, elem));}
 static void thread_enqueue(struct thread* t) {
   ASSERT(intr_get_level() == INTR_OFF);
   ASSERT(is_thread(t));
@@ -362,8 +362,14 @@ void thread_foreach(thread_action_func* func, void* aux) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority) { thread_current()->priority = new_priority; thread_yield(); }
 
+int thread_help_get_priority(struct thread* t) {
+  if (list_empty(&t->acquired_locks)) return t->priority;
+  int list_pri = list_entry(list_front(&t->acquired_locks), struct lock, elem)->donated_priority;
+  return t->priority > list_pri ? t->priority : list_pri;
+}
+
 /* Returns the current thread's priority. */
-int thread_get_priority(void) { return thread_current()->priority; }
+int thread_get_priority(void) { return thread_help_get_priority(thread_current()); }
 
 /* Sets the current thread's nice value to NICE. */
 void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */
@@ -461,6 +467,8 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->stack = (uint8_t*)t + PGSIZE;
   t->priority = priority;
   t->pcb = NULL;
+  t->wait_lock = NULL;
+  list_init(&t->acquired_locks);
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable();
