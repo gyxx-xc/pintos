@@ -233,13 +233,14 @@ void lock_release(struct lock* lock) {
   list_remove(&lock->elem);
   lock->holder = NULL;
   list_sort(&lock->semaphore.waiters, priority_less_func, NULL);
-  if (list_size(&lock->semaphore.waiters) > 1)
+  if (list_size(&lock->semaphore.waiters) > 1) {
     lock->donated_priority =
       thread_help_get_priority
       (list_entry(list_front(&lock->semaphore.waiters)->next,
                   struct thread, elem));
-  else
+  } else {
     lock->donated_priority = -1;
+  }
   sema_up(&lock->semaphore);
 }
 
