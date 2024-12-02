@@ -46,7 +46,7 @@ void userprog_init(void) {
 
   sema_init(&file_lock, 1);
 
-  if (success){
+  if (success) {
     list_init(&t->pcb->children);
   }
   /* Kill the kernel if we did not succeed */
@@ -61,7 +61,7 @@ pid_t process_execute(const char* file_name) {
   char* fn_copy;
   tid_t tid;
 
-  struct thread *t = thread_current();
+  struct thread* t = thread_current();
   sema_init(&t->pcb->child_load, 0);
 
   /* Make a copy of FILE_NAME.
@@ -71,9 +71,9 @@ pid_t process_execute(const char* file_name) {
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
 
-  void** list = malloc(2*sizeof(void*));
+  void** list = malloc(2 * sizeof(void*));
   *list = fn_copy;
-  *(list+1) = t;
+  *(list + 1) = t;
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, list);
@@ -92,7 +92,7 @@ pid_t process_execute(const char* file_name) {
    running. */
 static void start_process(void* list) {
   char* file_name = (char*)*(void**)list;
-  struct thread* parent = *((void**)list+1);
+  struct thread* parent = *((void**)list + 1);
   struct thread* t = thread_current();
   struct intr_frame if_;
   bool success, pcb_success;
@@ -108,7 +108,7 @@ static void start_process(void* list) {
       prev = false;
     } else {
       if (!prev)
-        argc_ ++;
+        argc_++;
       prev = true;
     }
   }
@@ -161,16 +161,16 @@ static void start_process(void* list) {
     char* file_name_data = if_.esp;
     memcpy(if_.esp, file_name, file_name_len + 1);
     // stack align
-    while((int)(if_.esp - (argc_+3)*4) & 15)
-      *(char*)(-- if_.esp) = 0;
+    while ((int)(if_.esp - (argc_ + 3) * 4) & 15)
+      *(char*)(--if_.esp) = 0;
     // argv[argc] = 0
     if_.esp -= 4;
     *(char**)if_.esp = 0;
 
     // argv
-    if_.esp -= 4*argc_;
+    if_.esp -= 4 * argc_;
     prev = false;
-    for (int i = 0; i < file_name_len; i ++) {
+    for (int i = 0; i < file_name_len; i++) {
       if (file_name_data[i] != '\0') {
         if (!prev) {
           *(char**)if_.esp = file_name_data + i;
@@ -181,7 +181,7 @@ static void start_process(void* list) {
         prev = false;
       }
     }
-    if_.esp -= 4*argc_;
+    if_.esp -= 4 * argc_;
     // argv*
     if_.esp -= 4;
     *(char***)if_.esp = if_.esp + 4;
@@ -197,7 +197,7 @@ static void start_process(void* list) {
   /* fpu init (load from thread) */
   if (success) {
     // since the fpu is init from the thread already
-    asm("fsave (%0)"::"g"(&if_.fpu));
+    asm("fsave (%0)" ::"g"(&if_.fpu));
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
@@ -303,7 +303,7 @@ void process_exit(int exit_status) {
   }
 
   // free all fdt not free yet
-  for (int i = 1; i <= cur->pcb->fd_count; i ++) {
+  for (int i = 1; i <= cur->pcb->fd_count; i++) {
     struct file* file = get_file(cur->pcb, i);
     if (file != NULL) {
       cur->pcb->fdt[i].valid = false;
@@ -464,40 +464,40 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
       goto done;
     file_ofs += sizeof phdr;
     switch (phdr.p_type) {
-    case PT_NULL:
-    case PT_NOTE:
-    case PT_PHDR:
-    case PT_STACK:
-    default:
-      /* Ignore this segment. */
-      break;
-    case PT_DYNAMIC:
-    case PT_INTERP:
-    case PT_SHLIB:
-      goto done;
-    case PT_LOAD:
-      if (validate_segment(&phdr, file)) {
-        bool writable = (phdr.p_flags & PF_W) != 0;
-        uint32_t file_page = phdr.p_offset & ~PGMASK;
-        uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
-        uint32_t page_offset = phdr.p_vaddr & PGMASK;
-        uint32_t read_bytes, zero_bytes;
-        if (phdr.p_filesz > 0) {
-          /* Normal segment.
-             Read initial part from disk and zero the rest. */
-          read_bytes = page_offset + phdr.p_filesz;
-          zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes);
-        } else {
-          /* Entirely zero.
-             Don't read anything from disk. */
-          read_bytes = 0;
-          zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
-        }
-        if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable))
-          goto done;
-      } else
+      case PT_NULL:
+      case PT_NOTE:
+      case PT_PHDR:
+      case PT_STACK:
+      default:
+        /* Ignore this segment. */
+        break;
+      case PT_DYNAMIC:
+      case PT_INTERP:
+      case PT_SHLIB:
         goto done;
-      break;
+      case PT_LOAD:
+        if (validate_segment(&phdr, file)) {
+          bool writable = (phdr.p_flags & PF_W) != 0;
+          uint32_t file_page = phdr.p_offset & ~PGMASK;
+          uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
+          uint32_t page_offset = phdr.p_vaddr & PGMASK;
+          uint32_t read_bytes, zero_bytes;
+          if (phdr.p_filesz > 0) {
+            /* Normal segment.
+             Read initial part from disk and zero the rest. */
+            read_bytes = page_offset + phdr.p_filesz;
+            zero_bytes = (ROUND_UP(page_offset + phdr.p_memsz, PGSIZE) - read_bytes);
+          } else {
+            /* Entirely zero.
+             Don't read anything from disk. */
+            read_bytes = 0;
+            zero_bytes = ROUND_UP(page_offset + phdr.p_memsz, PGSIZE);
+          }
+          if (!load_segment(file, file_page, (void*)mem_page, read_bytes, zero_bytes, writable))
+            goto done;
+        } else
+          goto done;
+        break;
     }
   }
 
@@ -510,7 +510,7 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
 
   success = true;
 
- done:
+done:
   /* We arrive here whether the load is successful or not. */
   return success;
 }
@@ -658,7 +658,7 @@ bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread
 pid_t get_pid(struct process* p) { return (pid_t)p->pid; }
 
 /* Gets the file of a process by the given fd */
-struct file* get_file(struct process* pcb, int fd){
+struct file* get_file(struct process* pcb, int fd) {
   if (fd == 0 || fd == 1)
     return NULL;
   if (fd > pcb->fd_count)
