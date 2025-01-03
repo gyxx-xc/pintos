@@ -27,6 +27,16 @@ struct fdtable {
   struct file* file_pointer;
 };
 
+// we need this is because the thread can be freed before join
+// so we need to save these information in list.
+struct pthread_list_elem {
+  tid_t tid;
+  void* stack_base;
+  struct semaphore exited;
+  struct thread* thread;
+  struct list_elem elem;
+};
+
 /* The process control block for a given process. Since
    there can be multiple threads per process, we need a separate
    PCB from the TCB. All TCBs in a process will have a pointer
@@ -51,6 +61,8 @@ struct process {
   struct process* parent;
   struct list children;
   struct child_list_elem self_list_elem;
+
+  struct list pthreads;
 
   struct fdtable fdt[128];
   int fd_count;

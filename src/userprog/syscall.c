@@ -44,7 +44,7 @@ static void syscall_handler(struct intr_frame* f) {
   if (!check_user32(args))
     kill_process();
 
-  printf("System call number: %d\n", args[0]);
+  /* printf("System call number: %d\n", args[0]); */
   int fd;
   struct file* file;
   switch (args[0]) {
@@ -197,39 +197,55 @@ static void syscall_handler(struct intr_frame* f) {
     return;
 
   case SYS_PT_CREATE: // 15
-    thread_create("t", thread_get_priority(),
-                  (pthread_fun)args[1],
-                  &args[2]);
+    check_args(args, 3);
+    f->eax =
+      pthread_execute((stub_fun)args[1], (pthread_fun)args[2], (void*)args[3]);
     return;
 
   case SYS_PT_EXIT: // 16
+    check_args(args, 0);
+    if (thread_current()->pcb->main_thread == thread_current())
+      pthread_exit_main();
+    else
+      pthread_exit();
     return;
 
   case SYS_PT_JOIN: // 17
+    check_args(args, 1);
+    f->eax = pthread_join(args[1]);
     return;
 
   case SYS_LOCK_INIT:
-    f->eax = lock_init((void*)args[1]);
+    f->eax = true;
+    lock_init((void*)args[1]);
     return;
 
   case SYS_LOCK_ACQUIRE:
+    lock_acquire((void*)args[1]);
+    f->eax = true;
     return;
 
   case SYS_LOCK_RELEASE:
+    lock_release((void*)args[1]);
+    f->eax = true;
     return;
 
   case SYS_SEMA_INIT:
+    sema_init((void*)args[1], args[2]);
+    f->eax = true;
     return;
 
   case SYS_SEMA_DOWN:
+    sema_down((void*)args[1]);
     return;
 
   case SYS_SEMA_UP:
+    sema_up((void*)args[1]);
     return;
 
   case SYS_GET_TID:
+    f->eax = thread_tid();
     return;
-
 
   case SYS_PRACTICE: // who cares this number...
     check_args(args, 1);
