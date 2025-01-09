@@ -49,23 +49,32 @@ struct process {
   struct thread* main_thread; /* Pointer to main thread */
 
   /* mine */
-  pid_t pid;                   // this is because thread might be
-                               // freed before process
-  struct semaphore child_load; // only one child is load one time
-  bool load_success;           // so only need one bool?
+  pid_t pid;
+  struct file* file;
+  // a lock so that only one thread is modifing pcb
+  // seems not very elegant?
+  struct lock pcb_lock;
+
+  struct fdtable fdt[128];
+  int fd_count;
+
+  // this is because thread might be
+  // freed before process
+  // only one child is load one time
+  // so only need one bool?
+  struct semaphore child_load;
+  bool load_success;
   struct semaphore exited;
   int exit_status;
-
-  struct file* file;
 
   struct process* parent;
   struct list children;
   struct child_list_elem self_list_elem;
 
   struct list pthreads;
-
-  struct fdtable fdt[128];
-  int fd_count;
+  void* sync_p[128]; //sync(sema/lock) pointer
+  bool sync_type[128]; //true for lock, false for sema
+  uint8_t sy_count;
 };
 
 void userprog_init(void);
@@ -78,6 +87,7 @@ void process_activate(void);
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);
 struct file* get_file(struct process* pcb, int fd);
+void* get_sync(struct process* pcb, int sync, bool type);
 
 tid_t pthread_execute(stub_fun, pthread_fun, void*);
 tid_t pthread_join(tid_t);

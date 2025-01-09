@@ -47,6 +47,7 @@ void userprog_init(void) {
   sema_init(&file_lock, 1);
 
   if (success) {
+    lock_init(&t->pcb->pcb_lock);
     list_init(&t->pcb->children);
   }
   /* Kill the kernel if we did not succeed */
@@ -75,6 +76,7 @@ pid_t process_execute(const char* file_name) {
   *list = fn_copy;
   *(list + 1) = t;
 
+  lock_acquire(&t->pcb->pcb_lock);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, list);
   sema_down(&t->pcb->child_load);
@@ -85,6 +87,7 @@ pid_t process_execute(const char* file_name) {
   if (!t->pcb->load_success) {
     return TID_ERROR;
   }
+  lock_release(&t->pcb->pcb_lock);
   return tid;
 }
 
@@ -119,6 +122,9 @@ static void start_process(void* list) {
 
   /* Initialize process control block */
   if (success) {
+    // STUB: I think I assume pcb is all 0 somewhere
+    memset(pcb, 0, sizeof(struct process));
+
     // Ensure that timer_interrunew_pcbpt() -> schedule() -> process_activate()
     // does not try to activate our uninitialized pagedir
     pcb->pagedir = NULL;
@@ -135,7 +141,7 @@ static void start_process(void* list) {
     list_push_back(&parent->pcb->children, &pcb->self_list_elem.elem);
 
     list_init(&pcb->pthreads);
-
+    lock_init(&pcb->pcb_lock);
     sema_init(&pcb->exited, 0);
 
     pcb->fd_count = 1;
@@ -245,21 +251,24 @@ static void start_process(void* list) {
    does nothing. */
 int process_wait(pid_t child_pid) {
   struct list* c = &thread_current()->pcb->children;
+  lock_acquire(&thread_current()->pcb->pcb_lock);
   if (list_empty(c))
     return -1;
   for (struct list_elem* e = list_begin(c); e != NULL; e = list_next(e)) {
     struct child_list_elem* c_elem = list_entry(e, struct child_list_elem, elem);
     if (get_pid(c_elem->process) == child_pid) {
-      sema_down(&c_elem->process->exited);
-      int status = c_elem->process->exit_status;
       list_remove(e);
       // TODO: review needed
       // cause the child is done now,
       // so, page_dir is not a problem, I think
+      lock_release(&thread_current()->pcb->pcb_lock);
+      sema_down(&c_elem->process->exited);
+      int status = c_elem->process->exit_status;
       free(c_elem->process);
       return status;
     }
   }
+  lock_release(&thread_current()->pcb->pcb_lock);
   return -1;
 }
 
@@ -274,6 +283,7 @@ void process_exit(int exit_status) {
     NOT_REACHED();
   }
 
+  // FIXME: add pcb_lock sync here
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pcb->pagedir;
@@ -311,6 +321,12 @@ void process_exit(int exit_status) {
       cur->pcb->fdt[i].valid = false;
       file_close(file);
     }
+  }
+
+  //free all sync pointer
+  for (int i = 0; i < cur->pcb->sy_count; i ++) {
+    // TEMP: maybe release the lock here?
+    free(cur->pcb->sync_p[i]);
   }
 
   file_close(cur->pcb->file); // close & unlock self
@@ -671,6 +687,16 @@ struct file* get_file(struct process* pcb, int fd) {
   return fdt->file_pointer;
 }
 
+void* get_sync(struct process* pcb, int sync, bool type) {
+    if (sync >= pcb->sy_count) {
+      return NULL;
+    }
+    if (pcb->sync_type[sync] != type) {
+      return NULL;
+    }
+    return pcb->sync_p[sync];
+}
+
 static struct pthread_list_elem*
 get_thread_elem_from_tid (struct process* pcb, tid_t tid) {
   struct list* list = &pcb->pthreads;
@@ -697,6 +723,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   struct semaphore child_l;
   sema_init(&child_l, 0);
   void* exec_[5] = {sf, tf, arg, thread_current()->pcb, &child_l};
+  /* lock_acquire(&thread_current()->pcb->pcb_lock); */
   tid = thread_create("pthread_execute", thread_get_priority(),
                       start_pthread, exec_);
   //wait until it load
@@ -706,6 +733,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   // check if the thread is load success (in pthread list)
   if (get_thread_elem_from_tid(thread_current()->pcb, tid) != NULL)
     return tid;
+  /* lock_release(&thread_current()->pcb->pcb_lock); */
   // not found
   return TID_ERROR;
 }
@@ -719,6 +747,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
    now, it does nothing. You may find it necessary to change the
    function signature. */
 static bool setup_thread_stack(void** esp) {
+  process_activate();
   uint8_t* kpage;
   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
   if (kpage == NULL) return false;
@@ -810,13 +839,18 @@ static void start_pthread(void* exec) {
    This function will be implemented in Project 2: Multithreading. For
    now, it does nothing. */
 tid_t pthread_join(tid_t tid) {
+  lock_acquire(&thread_current()->pcb->pcb_lock);
   struct pthread_list_elem* elem =
       get_thread_elem_from_tid(thread_current()->pcb, tid);
-  if (elem == NULL) return TID_ERROR;
+  if (elem == NULL) {
+    lock_release(&thread_current()->pcb->pcb_lock);
+    return TID_ERROR;
+  }
 
   sema_down(&elem->exited);
   list_remove(&elem->elem);
   free(elem);
+  lock_release(&thread_current()->pcb->pcb_lock);
   return tid;
 }
 
@@ -830,9 +864,13 @@ tid_t pthread_join(tid_t tid) {
    This function will be implemented in Project 2: Multithreading. For
    now, it does nothing. */
 void pthread_exit(void) {
+  lock_acquire(&thread_current()->pcb->pcb_lock);
   struct pthread_list_elem* elem =
     get_thread_elem_from_tid(thread_current()->pcb, thread_tid());
-  if (elem == NULL) thread_exit(); // I think we can do nothing if it's NULL
+  if (elem == NULL) {
+    lock_release(&thread_current()->pcb->pcb_lock);
+    thread_exit(); // I think we can do nothing if it's NULL
+  }
 
   uint8_t* kpage =
     pagedir_get_page(thread_current()->pcb->pagedir, elem->stack_base);
@@ -840,6 +878,7 @@ void pthread_exit(void) {
   palloc_free_page(kpage);
 
   sema_up(&elem->exited);
+  lock_release(&thread_current()->pcb->pcb_lock);
   thread_exit();
 }
 

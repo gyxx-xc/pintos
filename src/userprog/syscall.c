@@ -47,6 +47,8 @@ static void syscall_handler(struct intr_frame* f) {
   /* printf("System call number: %d\n", args[0]); */
   int fd;
   struct file* file;
+  int sync_n;
+  void* sync_p;
   switch (args[0]) {
   case SYS_HALT: // 0
     shutdown_power_off();
@@ -96,24 +98,29 @@ static void syscall_handler(struct intr_frame* f) {
       f->eax = -1;
       return;
     }
+    lock_acquire(&thread_current()->pcb->pcb_lock);
     fd = ++thread_current()->pcb->fd_count; // Okay, I know it's shit
     struct fdtable* fdt = &thread_current()->pcb->fdt[fd];
     fdt->file_pointer = file;
     fdt->valid = true;
+    lock_release(&thread_current()->pcb->pcb_lock);
     f->eax = fd;
     return;
 
   case SYS_FILESIZE: // 7
     check_args(args, 1);
     fd = args[1];
+    lock_acquire(&thread_current()->pcb->pcb_lock);
     file = get_file(thread_current()->pcb, fd);
     if (file == NULL) {
       f->eax = -1;
+      lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
     sema_down(&file_lock);
     f->eax = file_length(file);
     sema_up(&file_lock);
+    lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
   case SYS_READ: // 8
@@ -126,14 +133,17 @@ static void syscall_handler(struct intr_frame* f) {
       }
       f->eax = args[3];
     } else {
+      lock_acquire(&thread_current()->pcb->pcb_lock);
       file = get_file(thread_current()->pcb, fd);
       if (file == NULL) {
         f->eax = -1;
+        lock_release(&thread_current()->pcb->pcb_lock);
         return;
       }
       sema_down(&file_lock);
       f->eax = file_read(file, buffer, args[3]);
       sema_up(&file_lock);
+      lock_release(&thread_current()->pcb->pcb_lock);
     }
     put_user_buff(buffer, (uint8_t*)args[2], f->eax);
     return;
@@ -147,20 +157,24 @@ static void syscall_handler(struct intr_frame* f) {
       f->eax = args[3];
       return;
     } else {
+      lock_acquire(&thread_current()->pcb->pcb_lock);
       file = get_file(thread_current()->pcb, fd);
       if (file == NULL) {
         f->eax = -1;
+        lock_release(&thread_current()->pcb->pcb_lock);
         return;
       }
       sema_down(&file_lock);
       f->eax = file_write(file, (void*)args[2], args[3]);
       sema_up(&file_lock);
+      lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
 
   case SYS_SEEK: // 10
     check_args(args, 2);
     fd = args[1];
+    lock_acquire(&thread_current()->pcb->pcb_lock);
     file = get_file(thread_current()->pcb, fd);
     if (file == NULL) {
       f->eax = -1;
@@ -169,31 +183,39 @@ static void syscall_handler(struct intr_frame* f) {
     sema_down(&file_lock);
     file_seek(file, args[2]);
     sema_up(&file_lock);
+    lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
   case SYS_TELL: // 11
     check_args(args, 1);
     fd = args[1];
+    lock_acquire(&thread_current()->pcb->pcb_lock);
     file = get_file(thread_current()->pcb, fd);
     if (file == NULL) {
       f->eax = -1;
+      lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
     sema_down(&file_lock);
     f->eax = file_tell(file);
     sema_up(&file_lock);
+    lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
   case SYS_CLOSE: // 12
     check_args(args, 1);
     fd = args[1];
+    lock_acquire(&thread_current()->pcb->pcb_lock);
     file = get_file(thread_current()->pcb, fd);
-    if (file == NULL)
+    if (file == NULL) {
+      lock_release(&thread_current()->pcb->pcb_lock);
       return;
+    }
     thread_current()->pcb->fdt[fd].valid = false;
     sema_down(&file_lock);
     file_close(file);
     sema_up(&file_lock);
+    lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
   case SYS_PT_CREATE: // 15
@@ -215,18 +237,68 @@ static void syscall_handler(struct intr_frame* f) {
     f->eax = pthread_join(args[1]);
     return;
 
-  case SYS_LOCK_INIT:
+  case SYS_LOCK_INIT: // 18
+    check_args(args, 1);
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    sync_n = thread_current()->pcb->sy_count;
+    if (!put_user((uint8_t*)args[1], sync_n)) {
+      f->eax = false;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      return;
+    }
+    thread_current()->pcb->sy_count = sync_n+1;
+
+    sync_p = thread_current()->pcb->sync_p[sync_n]
+      = malloc(sizeof(struct lock));
+    if (sync_p == NULL) { // fail
+      thread_current()->pcb->sy_count --; // revert this sync
+      f->eax = false;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      return;
+    } //else
+    thread_current()->pcb->sync_type[sync_n] = true;
+    lock_release(&thread_current()->pcb->pcb_lock);
+    lock_init(sync_p);
     f->eax = true;
-    lock_init((void*)args[1]);
     return;
 
-  case SYS_LOCK_ACQUIRE:
-    lock_acquire((void*)args[1]);
+  case SYS_LOCK_ACQUIRE: // 19
+    check_args(args, 1);
+    sync_n = get_user((uint8_t*)args[1]);
+    if (sync_n == -1) {
+      f->eax = false;
+      return;
+    }
+    sync_p = get_sync(thread_current()->pcb, sync_n, true);
+    if (sync_p == NULL) {
+      f->eax = false;
+      return;
+    }
+    if (((struct lock*)sync_p)->holder == thread_current()) {
+      f->eax = false;
+      return;
+    }
+    lock_acquire(sync_p);
     f->eax = true;
     return;
 
-  case SYS_LOCK_RELEASE:
-    lock_release((void*)args[1]);
+  case SYS_LOCK_RELEASE: // 20
+    check_args(args, 1);
+    sync_n = get_user((uint8_t*)args[1]);
+    if (sync_n == -1) {
+      f->eax = false;
+      return;
+    }
+    sync_p = get_sync(thread_current()->pcb, sync_n, true);
+    if (sync_p == NULL) {
+      f->eax = false;
+      return;
+    }
+    if (((struct lock*)sync_p)->holder != thread_current()) {
+      f->eax = false;
+      return;
+    }
+    lock_release(sync_p);
     f->eax = true;
     return;
 
