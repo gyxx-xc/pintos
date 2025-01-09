@@ -846,11 +846,11 @@ tid_t pthread_join(tid_t tid) {
     lock_release(&thread_current()->pcb->pcb_lock);
     return TID_ERROR;
   }
+  lock_release(&thread_current()->pcb->pcb_lock);
 
   sema_down(&elem->exited);
   list_remove(&elem->elem);
   free(elem);
-  lock_release(&thread_current()->pcb->pcb_lock);
   return tid;
 }
 

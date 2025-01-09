@@ -44,7 +44,7 @@ static void syscall_handler(struct intr_frame* f) {
   if (!check_user32(args))
     kill_process();
 
-  /* printf("System call number: %d\n", args[0]); */
+  /* printf("%d: System call number: %d\n", thread_tid(), args[0]); */
   int fd;
   struct file* file;
   int sync_n;
@@ -302,20 +302,68 @@ static void syscall_handler(struct intr_frame* f) {
     f->eax = true;
     return;
 
-  case SYS_SEMA_INIT:
-    sema_init((void*)args[1], args[2]);
+  case SYS_SEMA_INIT: // 21
+    check_args(args, 2);
+    if ((int)args[2] < 0) {
+      f->eax = false;
+      return;
+    }
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    sync_n = thread_current()->pcb->sy_count;
+    if (!put_user((uint8_t*)args[1], sync_n)) {
+      f->eax = false;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      return;
+    }
+    thread_current()->pcb->sy_count = sync_n+1;
+
+    sync_p = thread_current()->pcb->sync_p[sync_n]
+      = malloc(sizeof(struct semaphore));
+    if (sync_p == NULL) { // fail
+      thread_current()->pcb->sy_count --; // revert this sync
+      f->eax = false;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      return;
+    } //else
+    thread_current()->pcb->sync_type[sync_n] = false;
+    lock_release(&thread_current()->pcb->pcb_lock);
+    sema_init(sync_p, args[2]);
     f->eax = true;
     return;
 
-  case SYS_SEMA_DOWN:
-    sema_down((void*)args[1]);
+  case SYS_SEMA_DOWN: // 22
+    check_args(args, 1);
+    sync_n = get_user((uint8_t*)args[1]);
+    if (sync_n == -1) {
+      f->eax = false;
+      return;
+    }
+    sync_p = get_sync(thread_current()->pcb, sync_n, false);
+    if (sync_p == NULL) {
+      f->eax = false;
+      return;
+    }
+    sema_down(sync_p);
+    f->eax = true;
     return;
 
-  case SYS_SEMA_UP:
-    sema_up((void*)args[1]);
+  case SYS_SEMA_UP: // 23
+    check_args(args, 1);
+    sync_n = get_user((uint8_t*)args[1]);
+    if (sync_n == -1) {
+      f->eax = false;
+      return;
+    }
+    sync_p = get_sync(thread_current()->pcb, sync_n, false);
+    if (sync_p == NULL) {
+      f->eax = false;
+      return;
+    }
+    sema_up(sync_p);
+    f->eax = true;
     return;
 
-  case SYS_GET_TID:
+  case SYS_GET_TID: // 24
     f->eax = thread_tid();
     return;
 
