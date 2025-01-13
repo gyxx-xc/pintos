@@ -81,10 +81,12 @@ pid_t process_execute(const char* file_name) {
   tid = thread_create(file_name, PRI_DEFAULT, start_process, list);
   sema_down(&t->pcb->child_load);
   if (tid == TID_ERROR) {
+    lock_release(&t->pcb->pcb_lock);
     palloc_free_page(fn_copy);
     return TID_ERROR;
   }
   if (!t->pcb->load_success) {
+    lock_release(&t->pcb->pcb_lock);
     return TID_ERROR;
   }
   lock_release(&t->pcb->pcb_lock);
@@ -302,7 +304,36 @@ void process_exit(int exit_status) {
     NOT_REACHED();
   }
 
-  // FIXME: add pcb_lock sync here
+  // since the thread is dying
+  // so there should no thread hold the lock then
+  lock_acquire(&cur->pcb->pcb_lock);
+
+  // the call pthread exit for each thread
+  // since this proj only simulate one cpu, no need to stop the other thread
+  // (which are all not running)
+  enum intr_level old_level = intr_disable();
+  struct list* list = &cur->pcb->pthreads;
+  struct list_elem* e;
+  for (e = list_begin(list);
+       e != list_end(list);
+       e = list_next(e)) {
+    struct thread* pth = list_entry(e, struct pthread_list_elem, elem)->thread;
+    if (pth == thread_current()) continue;
+    if (pth->status == THREAD_RUNNING || pth->status == THREAD_READY) {
+      list_remove(&pth->allelem);
+      pth->status = THREAD_DYING;
+    }
+    if (pth->status == THREAD_BLOCKED) {
+      thread_unblock(pth);
+      list_remove(&pth->allelem);
+      pth->status = THREAD_DYING;
+    }
+    if (pth->status == THREAD_RUNNING) {
+      // STUB
+    }
+  }
+  intr_set_level(old_level);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pcb->pagedir;
