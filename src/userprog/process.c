@@ -137,6 +137,8 @@ static void start_process(void* list) {
     strlcpy(pcb->process_name, file_name, sizeof pcb->process_name);
     pcb->pid = t->tid;
 
+    list_init(&pcb->fdt);
+
     pcb->parent = parent->pcb;
     list_init(&pcb->children);
     pcb->self_list_elem.process = pcb;
@@ -350,27 +352,36 @@ void process_exit(int exit_status) {
     pagedir_destroy(pd);
   }
 
-  // free all the child pcb notx waited yet
+  // free all the child pcb not waited yet
   struct list* c = &cur->pcb->children;
   if (!list_empty(c)) {
-    for (struct list_elem* e = list_begin(c); e != NULL; e = list_remove(e)) {
+    for (struct list_elem* e = list_begin(c); e != list_end(c);) {
       struct child_list_elem* c_elem = list_entry(e, struct child_list_elem, elem);
       if (sema_try_down(&c_elem->process->exited)) {
         free(c_elem->process);
       } else {
+        // let child free it by itself
         c_elem->process->parent = NULL;
       }
-      free(e);
+      e = list_remove(e);
+      free(c_elem);
     }
   }
-
   // free all fdt not free yet
-  for (int i = 1; i <= cur->pcb->fd_count; i++) {
-    struct file* file = get_file(cur->pcb, i);
-    if (file != NULL) {
-      cur->pcb->fdt[i].valid = false;
-      file_close(file);
-    }
+  /* for (int i = 1; i <= cur->pcb->fd_count; i++) { */
+  /*   struct file* file = get_file(cur->pcb, i); */
+  /*   if (file != NULL) { */
+  /*     cur->pcb->fdt[i].valid = false; */
+  /*     file_close(file); */
+  /*   } */
+  /* } */
+  for (struct list_elem* f = list_begin(&cur->pcb->fdt);
+       f != list_end(&cur->pcb->fdt);) {
+    struct fdtable_elem* f_elem = list_entry(f, struct fdtable_elem, elem);
+    /* printf("%d\n", (int)f_elem->fd); */
+    file_close(f_elem->file_pointer);
+    f = list_remove(f);
+    free(f_elem);
   }
 
   //free all sync pointer
@@ -731,10 +742,13 @@ struct file* get_file(struct process* pcb, int fd) {
     return NULL;
   if (fd > pcb->fd_count)
     return NULL;
-  struct fdtable* fdt = &pcb->fdt[fd];
-  if (!fdt->valid)
-    return NULL;
-  return fdt->file_pointer;
+  for (struct list_elem* e = list_begin(&pcb->fdt);
+       e != list_end(&pcb->fdt); e = list_next(e)) {
+    if (list_entry(e, struct fdtable_elem, elem)->fd == fd) {
+      return list_entry(e, struct fdtable_elem, elem)->file_pointer;
+    }
+  }
+  return NULL;
 }
 
 void* get_sync(struct process* pcb, int sync, bool type) {
@@ -750,10 +764,8 @@ void* get_sync(struct process* pcb, int sync, bool type) {
 static struct pthread_list_elem*
 get_thread_elem_from_tid (struct process* pcb, tid_t tid) {
   struct list* list = &pcb->pthreads;
-  struct list_elem* e;
-  for (e = list_begin(list);
-       e != list_end(list);
-       e = list_next(e))
+  for (struct list_elem* e = list_begin(list);
+       e != list_end(list); e = list_next(e))
     if (list_entry(e, struct pthread_list_elem, elem)->tid == tid)
       return list_entry(e, struct pthread_list_elem, elem);
   return NULL;
@@ -773,17 +785,19 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   struct semaphore child_l;
   sema_init(&child_l, 0);
   void* exec_[5] = {sf, tf, arg, thread_current()->pcb, &child_l};
-  /* lock_acquire(&thread_current()->pcb->pcb_lock); */
   tid = thread_create("pthread_execute", thread_get_priority(),
                       start_pthread, exec_);
   //wait until it load
   sema_down(&child_l);
   if (tid == TID_ERROR) return TID_ERROR;
 
+  lock_acquire(&thread_current()->pcb->pcb_lock);
   // check if the thread is load success (in pthread list)
-  if (get_thread_elem_from_tid(thread_current()->pcb, tid) != NULL)
+  struct pthread_list_elem* pth =
+    get_thread_elem_from_tid(thread_current()->pcb, tid);
+  lock_release(&thread_current()->pcb->pcb_lock);
+  if (pth != NULL)
     return tid;
-  /* lock_release(&thread_current()->pcb->pcb_lock); */
   // not found
   return TID_ERROR;
 }
@@ -841,7 +855,9 @@ static void start_pthread(void* exec) {
     sema_init(&p_elem->exited, 0);
     p_elem->thread = t;
     p_elem->joined = false;
+    lock_acquire(&pcb->pcb_lock);
     list_push_back(&pcb->pthreads, &p_elem->elem);
+    lock_release(&pcb->pcb_lock);
   }
 
   if (success) {
@@ -870,7 +886,9 @@ static void start_pthread(void* exec) {
 
   /* Clean up. Exit on failure or jump to userspace */
   if (!success && p_success) {
+    lock_acquire(&pcb->pcb_lock);
     list_pop_back(&pcb->pthreads);
+    lock_release(&pcb->pcb_lock);
     free(p_elem);
   }
   if (!success) {

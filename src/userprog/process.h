@@ -22,9 +22,10 @@ struct child_list_elem {
   struct list_elem elem;
 };
 
-struct fdtable {
-  bool valid;
+struct fdtable_elem {
+  int fd;
   struct file* file_pointer;
+  struct list_elem elem;
 };
 
 // we need this is because the thread can be freed before join
@@ -56,7 +57,8 @@ struct process {
   // seems not very elegant?
   struct lock pcb_lock;
 
-  struct fdtable fdt[128];
+  /* struct fdtable fdt[128]; */
+  struct list fdt;
   int fd_count;
 
   // this is because thread might be
@@ -73,8 +75,8 @@ struct process {
   struct child_list_elem self_list_elem;
 
   struct list pthreads;
-  void* sync_p[256]; //sync(sema/lock) pointer
-  bool sync_type[256]; //true for lock, false for sema
+  void* sync_p[256]; // sync(sema/lock) pointer
+  bool sync_type[256]; // true for lock, false for sema
   uint8_t sy_count;
 };
 

@@ -98,13 +98,16 @@ static void syscall_handler(struct intr_frame* f) {
       f->eax = -1;
       return;
     }
+    struct fdtable_elem* f_elem = malloc(sizeof(struct fdtable_elem));
+    if (f_elem == NULL) {
+      f->eax = -1;
+      return;
+    }
     lock_acquire(&thread_current()->pcb->pcb_lock);
-    fd = ++thread_current()->pcb->fd_count; // Okay, I know it's shit
-    struct fdtable* fdt = &thread_current()->pcb->fdt[fd];
-    fdt->file_pointer = file;
-    fdt->valid = true;
+    f_elem->fd = ++thread_current()->pcb->fd_count;
+    f_elem->file_pointer = file;
     lock_release(&thread_current()->pcb->pcb_lock);
-    f->eax = fd;
+    f->eax = f_elem->fd;
     return;
 
   case SYS_FILESIZE: // 7
@@ -205,16 +208,23 @@ static void syscall_handler(struct intr_frame* f) {
   case SYS_CLOSE: // 12
     check_args(args, 1);
     fd = args[1];
-    lock_acquire(&thread_current()->pcb->pcb_lock);
-    file = get_file(thread_current()->pcb, fd);
-    if (file == NULL) {
-      lock_release(&thread_current()->pcb->pcb_lock);
+
+    //copy from get_file
+    if (fd == 0 || fd == 1)
       return;
+    if (fd > thread_current()->pcb->fd_count)
+      return;
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    for (struct list_elem* e = list_begin(&thread_current()->pcb->fdt);
+         e != list_end(&thread_current()->pcb->fdt); e = list_next(e)) {
+      if (list_entry(e, struct fdtable_elem, elem)->fd == fd) {
+        sema_down(&file_lock);
+        file_close(list_entry(e, struct fdtable_elem, elem)->file_pointer);
+        sema_up(&file_lock);
+        lock_release(&thread_current()->pcb->pcb_lock);
+        return;
+      }
     }
-    thread_current()->pcb->fdt[fd].valid = false;
-    sema_down(&file_lock);
-    file_close(file);
-    sema_up(&file_lock);
     lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
