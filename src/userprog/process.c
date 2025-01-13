@@ -98,7 +98,7 @@ static void start_process(void* list) {
   struct thread* parent = *((void**)list + 1);
   struct thread* t = thread_current();
   struct intr_frame if_;
-  bool success, pcb_success;
+  bool success, pcb_success, pth_success;
   int file_name_len = strlen(file_name);
   int argc_ = 0;
 
@@ -145,6 +145,19 @@ static void start_process(void* list) {
     sema_init(&pcb->exited, 0);
 
     pcb->fd_count = 1;
+  }
+
+  struct pthread_list_elem* pthread_elem =
+    malloc(sizeof(struct pthread_list_elem));
+  success = pth_success = pthread_elem != NULL;
+  /* Initialize pthread elem*/
+  if (success) {
+    pthread_elem->tid = t->tid;
+    pthread_elem->stack_base = (void*)-1;
+    pthread_elem->joined = false;
+    sema_init(&pthread_elem->exited, 0);
+    pthread_elem->thread = t;
+    list_push_back(&pcb->pthreads, &pthread_elem->elem);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -219,6 +232,10 @@ static void start_process(void* list) {
     free(pcb_to_free);
   }
 
+  if (!success && pth_success) {
+    free(pthread_elem);
+  }
+
   /* Clean up. Exit on failure or jump to userspace */
   palloc_free_page(file_name);
   if (!success) {
@@ -252,8 +269,10 @@ static void start_process(void* list) {
 int process_wait(pid_t child_pid) {
   struct list* c = &thread_current()->pcb->children;
   lock_acquire(&thread_current()->pcb->pcb_lock);
-  if (list_empty(c))
+  if (list_empty(c)) {
+    lock_release(&thread_current()->pcb->pcb_lock);
     return -1;
+  }
   for (struct list_elem* e = list_begin(c); e != NULL; e = list_next(e)) {
     struct child_list_elem* c_elem = list_entry(e, struct child_list_elem, elem);
     if (get_pid(c_elem->process) == child_pid) {
@@ -790,6 +809,7 @@ static void start_pthread(void* exec) {
     p_elem->tid = thread_tid();
     sema_init(&p_elem->exited, 0);
     p_elem->thread = t;
+    p_elem->joined = false;
     list_push_back(&pcb->pthreads, &p_elem->elem);
   }
 
@@ -842,10 +862,11 @@ tid_t pthread_join(tid_t tid) {
   lock_acquire(&thread_current()->pcb->pcb_lock);
   struct pthread_list_elem* elem =
       get_thread_elem_from_tid(thread_current()->pcb, tid);
-  if (elem == NULL) {
+  if (elem == NULL || elem->joined == true) {
     lock_release(&thread_current()->pcb->pcb_lock);
     return TID_ERROR;
   }
+  elem->joined = true;
   lock_release(&thread_current()->pcb->pcb_lock);
 
   sema_down(&elem->exited);
@@ -890,4 +911,41 @@ void pthread_exit(void) {
 
    This function will be implemented in Project 2: Multithreading. For
    now, it does nothing. */
-void pthread_exit_main(void) {}
+void pthread_exit_main(void) {
+  // 1. do pthread_exit
+  lock_acquire(&thread_current()->pcb->pcb_lock);
+  struct pthread_list_elem* elem =
+    get_thread_elem_from_tid(thread_current()->pcb, thread_tid());
+  if (elem == NULL) {
+    lock_release(&thread_current()->pcb->pcb_lock);
+    thread_exit(); // I think we can do nothing if it's NULL
+  }
+
+  // kpage is freed when process exited
+  sema_up(&elem->exited);
+  lock_release(&thread_current()->pcb->pcb_lock);
+
+  // 2. do pthread_join for all
+  struct list_elem* e;
+  struct list* list = &thread_current()->pcb->pthreads;
+  lock_acquire(&thread_current()->pcb->pcb_lock);
+  for (e = list_begin(list);
+       e != list_end(list);) {
+    elem = list_entry(e, struct pthread_list_elem, elem);
+    if (elem->joined == false) {
+      // a not joined thread
+      elem->joined  = true;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      // let it run
+      sema_down(&elem->exited);
+      lock_acquire(&thread_current()->pcb->pcb_lock);
+      e = list_remove(&elem->elem);
+      free(elem);
+    } else e = list_next(e);
+  }
+  lock_release(&thread_current()->pcb->pcb_lock);
+
+  // if the main is not joined, the elem will be freed in process exit
+  printf("%s: exit(0)\n", thread_current()->pcb->process_name);
+  process_exit(0);
+}

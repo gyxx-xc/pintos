@@ -32,6 +32,7 @@ struct fdtable {
 struct pthread_list_elem {
   tid_t tid;
   void* stack_base;
+  bool joined;
   struct semaphore exited;
   struct thread* thread;
   struct list_elem elem;

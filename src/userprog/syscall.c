@@ -234,6 +234,10 @@ static void syscall_handler(struct intr_frame* f) {
 
   case SYS_PT_JOIN: // 17
     check_args(args, 1);
+    if ((tid_t)args[1] == thread_tid()) {
+      f->eax = TID_ERROR;
+      return;
+    }
     f->eax = pthread_join(args[1]);
     return;
 
