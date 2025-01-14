@@ -317,22 +317,16 @@ void process_exit(int exit_status) {
   struct list* list = &cur->pcb->pthreads;
   struct list_elem* e;
   for (e = list_begin(list);
-       e != list_end(list);
-       e = list_next(e)) {
-    struct thread* pth = list_entry(e, struct pthread_list_elem, elem)->thread;
-    if (pth == thread_current()) continue;
-    if (pth->status == THREAD_RUNNING || pth->status == THREAD_READY) {
+       e != list_end(list);) {
+    struct pthread_list_elem* p_elem = list_entry(e, struct pthread_list_elem, elem);
+    struct thread* pth = p_elem->thread;
+    if (pth != thread_current() && !sema_try_down(&p_elem->exited)) { // not exited (thread not freed)
+      list_remove(&pth->elem);
       list_remove(&pth->allelem);
-      pth->status = THREAD_DYING;
+      palloc_free_page(pth);
     }
-    if (pth->status == THREAD_BLOCKED) {
-      thread_unblock(pth);
-      list_remove(&pth->allelem);
-      pth->status = THREAD_DYING;
-    }
-    if (pth->status == THREAD_RUNNING) {
-      // STUB
-    }
+    e = list_remove(e);
+    free(p_elem);
   }
   intr_set_level(old_level);
 
@@ -368,17 +362,9 @@ void process_exit(int exit_status) {
     }
   }
   // free all fdt not free yet
-  /* for (int i = 1; i <= cur->pcb->fd_count; i++) { */
-  /*   struct file* file = get_file(cur->pcb, i); */
-  /*   if (file != NULL) { */
-  /*     cur->pcb->fdt[i].valid = false; */
-  /*     file_close(file); */
-  /*   } */
-  /* } */
   for (struct list_elem* f = list_begin(&cur->pcb->fdt);
        f != list_end(&cur->pcb->fdt);) {
     struct fdtable_elem* f_elem = list_entry(f, struct fdtable_elem, elem);
-    /* printf("%d\n", (int)f_elem->fd); */
     file_close(f_elem->file_pointer);
     f = list_remove(f);
     free(f_elem);
@@ -887,7 +873,7 @@ static void start_pthread(void* exec) {
   /* Clean up. Exit on failure or jump to userspace */
   if (!success && p_success) {
     lock_acquire(&pcb->pcb_lock);
-    list_pop_back(&pcb->pthreads);
+    list_remove(&p_elem->elem);
     lock_release(&pcb->pcb_lock);
     free(p_elem);
   }
@@ -919,7 +905,9 @@ tid_t pthread_join(tid_t tid) {
   lock_release(&thread_current()->pcb->pcb_lock);
 
   sema_down(&elem->exited);
+  lock_acquire(&thread_current()->pcb->pcb_lock);
   list_remove(&elem->elem);
+  lock_release(&thread_current()->pcb->pcb_lock);
   free(elem);
   return tid;
 }

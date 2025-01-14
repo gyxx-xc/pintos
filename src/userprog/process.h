@@ -75,9 +75,9 @@ struct process {
   struct child_list_elem self_list_elem;
 
   struct list pthreads;
-  void* sync_p[256]; // sync(sema/lock) pointer
-  bool sync_type[256]; // true for lock, false for sema
-  uint8_t sy_count;
+  void* sync_p[300]; // sync(sema/lock) pointer
+  bool sync_type[300]; // true for lock, false for sema
+  int sy_count;
 };
 
 void userprog_init(void);

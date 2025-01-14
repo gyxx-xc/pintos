@@ -106,6 +106,7 @@ static void syscall_handler(struct intr_frame* f) {
     lock_acquire(&thread_current()->pcb->pcb_lock);
     f_elem->fd = ++thread_current()->pcb->fd_count;
     f_elem->file_pointer = file;
+    list_push_back(&thread_current()->pcb->fdt, &f_elem->elem);
     lock_release(&thread_current()->pcb->pcb_lock);
     f->eax = f_elem->fd;
     return;
@@ -129,7 +130,15 @@ static void syscall_handler(struct intr_frame* f) {
   case SYS_READ: // 8
     check_args(args, 3);
     fd = args[1];
+    if (args[3] == 0) {
+      f->eax = 0;
+      return;
+    }
     uint8_t* buffer = malloc(sizeof(uint8_t) * args[3]);
+    if (buffer == NULL) {
+      f->eax = -1;
+      return;
+    }
     if (fd == 0) {
       for (unsigned int i = 0; i < args[3]; i++) {
         *(buffer++) = input_getc();
@@ -141,6 +150,7 @@ static void syscall_handler(struct intr_frame* f) {
       if (file == NULL) {
         f->eax = -1;
         lock_release(&thread_current()->pcb->pcb_lock);
+        free(buffer);
         return;
       }
       sema_down(&file_lock);
@@ -149,6 +159,7 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&thread_current()->pcb->pcb_lock);
     }
     put_user_buff(buffer, (uint8_t*)args[2], f->eax);
+    free(buffer);
     return;
 
   case SYS_WRITE: // 9
@@ -221,6 +232,7 @@ static void syscall_handler(struct intr_frame* f) {
         sema_down(&file_lock);
         file_close(list_entry(e, struct fdtable_elem, elem)->file_pointer);
         sema_up(&file_lock);
+        list_remove(e);
         lock_release(&thread_current()->pcb->pcb_lock);
         return;
       }
