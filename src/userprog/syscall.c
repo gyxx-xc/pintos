@@ -459,7 +459,7 @@ static void put_user_buff(const uint8_t* output, uint8_t* buff, off_t size) {
 
 static bool check_user32(const uint32_t* uaddr) {
   return (get_user((uint8_t*)uaddr) != -1) && (get_user((uint8_t*)uaddr + 1) != -1) &&
-    (get_user((uint8_t*)uaddr + 2) != -1) && (get_user((uint8_t*)uaddr + 3) != -1);
+         (get_user((uint8_t*)uaddr + 2) != -1) && (get_user((uint8_t*)uaddr + 3) != -1);
 }
 
 static bool check_args(uint32_t* args, int argc) {

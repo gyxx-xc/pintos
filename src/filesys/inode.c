@@ -2,10 +2,14 @@
 #include <list.h>
 #include <debug.h>
 #include <round.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include "devices/block.h"
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
@@ -18,6 +22,58 @@ struct inode_disk {
   unsigned magic;       /* Magic number. */
   uint32_t unused[125]; /* Not used. */
 };
+
+// 2 way, 2 offset, 16 index
+// 0 offset, 1-4 index, other tags
+// tags, 4 index, 1 offset
+// table*[16][2] -> malloc
+// {uint32_t tags,
+// bool valid, dirty;
+// metadata (int age; lock use),
+// data*[2] -> (malloc uint8_t[BLOCK_SECTOR_SIZE]) }
+
+// read: table [(address>>1) & 0xf]
+// for i:
+//  hold use
+//  if t[i].valid &
+//      t[i].tags == address >> 5
+//   hit:
+//   read from memory t[i] -> data[address&1]
+//  release use
+// else miss:
+//  goto replace
+//  hold use
+//   read from memory t[i] -> data[address&1]
+//  release use
+
+// write: same as read, yet
+// hit:
+// write to mem, set dirty
+
+// replace:
+// get index, tags
+// c=alg_to_replace
+//  hold c.use
+//  if c.valid & c.dirty: write to disk
+//  set tags = address>>5, dirty=f
+//  age=age_cnt++
+//  read two data
+//  release c.use
+
+// alg LRU
+// meta: age bits, valid, dirty, use(sema, for r&w)
+struct page_cache_way {
+  uint32_t tags;
+  bool valid;
+  bool dirty;
+  uint32_t age; // large enough (1 years?)
+  struct lock use;
+  // --- meta data ---
+  uint8_t* data[2];
+};
+
+static struct page_cache_way* page_cache;
+static uint32_t page_cache_age_count = 0;
 
 /* Returns the number of sectors to allocate for an inode SIZE
    bytes long. */
@@ -50,7 +106,31 @@ static block_sector_t byte_to_sector(const struct inode* inode, off_t pos) {
 static struct list open_inodes;
 
 /* Initializes the inode module. */
-void inode_init(void) { list_init(&open_inodes); }
+void inode_init(void) {
+  list_init(&open_inodes);
+  page_cache = malloc(sizeof(struct page_cache_way)*16*2);
+  ASSERT(page_cache != NULL);
+  for (int i = 0; i < 32; i++) {
+    page_cache[i].valid = false;
+    lock_init(&page_cache[i].use);
+    page_cache[i].data[0] = malloc(BLOCK_SECTOR_SIZE);
+    ASSERT(page_cache[i].data[0] != NULL);
+    page_cache[i].data[1] = malloc(BLOCK_SECTOR_SIZE);
+    ASSERT(page_cache[i].data[1] != NULL);
+  }
+}
+
+void inode_done(void) {
+  for (int i = 0; i < 32; i++) {
+    if (page_cache[i].valid && page_cache[i].dirty) {
+      block_write(fs_device, (page_cache[i].tags<<5)+(i&(~1)), page_cache[i].data[0]);
+      block_write(fs_device, (page_cache[i].tags<<5)+(i|1), page_cache[i].data[1]);
+    }
+    free(page_cache[i].data[0]);
+    free(page_cache[i].data[1]);
+  }
+  free(page_cache);
+}
 
 /* Initializes an inode with LENGTH bytes of data and
    writes the new inode to sector SECTOR on the file system
@@ -159,6 +239,57 @@ void inode_remove(struct inode* inode) {
   inode->removed = true;
 }
 
+static struct page_cache_way* page_cache_get_cache(block_sector_t address) {
+  // tags, 4 index, 1 offset
+  // get the middle index, and *2 for two ways
+  struct page_cache_way* cache = page_cache+((address>>1)&0xf)*2;
+  for (int i = 0; i < 2; i++) {
+    lock_acquire(&cache->use);
+    if (cache->valid && cache->tags == address>>5)
+      return cache; // release the lock out of function
+    lock_release(&cache->use);
+    cache ++;
+  }
+  return NULL;
+}
+
+static struct page_cache_way* page_cache_replace_cache(block_sector_t address) {
+  // tags, 4 index, 1 offset
+  // get the middle index, and *2 for two ways
+  struct page_cache_way* cache = page_cache+((address>>1)&0xf)*2;
+  // STUB: since we only have two ways
+  lock_acquire(&cache->use);
+  lock_acquire(&(cache+1)->use);
+  if (cache->valid && (cache+1)->valid) {
+    if (cache->age <= (cache+1)->age) {
+      lock_release(&(cache+1)->use);
+    } else {
+      lock_release(&cache->use);
+      cache ++;
+    }
+  } else {
+    if (!cache->valid) {
+      lock_release(&(cache + 1)->use);
+    } else {
+      lock_release(&cache->use);
+      cache++;
+    }
+  }
+
+  if (cache->valid && cache->dirty) {
+    // tags, 4 index, 1 offset
+    block_write(fs_device, (cache->tags<<5)+(address&0x1e), cache->data[0]);
+    block_write(fs_device, (cache->tags<<5)+(address&0x1e)+1, cache->data[1]);
+  }
+  cache->tags = address>>5;
+  cache->dirty = false;
+  cache->valid = true;
+  cache->age = page_cache_age_count ++;
+  block_read(fs_device, address&(~1), cache->data[0]);
+  block_read(fs_device, address|1, cache->data[1]);
+  return cache;
+}
+
 /* Reads SIZE bytes from INODE into BUFFER, starting at position OFFSET.
    Returns the number of bytes actually read, which may be less
    than SIZE if an error occurs or end of file is reached. */
@@ -177,32 +308,23 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
     int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
     int min_left = inode_left < sector_left ? inode_left : sector_left;
 
+
+
     /* Number of bytes to actually copy out of this sector. */
     int chunk_size = size < min_left ? size : min_left;
     if (chunk_size <= 0)
       break;
-
-    if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE) {
-      /* Read full sector directly into caller's buffer. */
-      block_read(fs_device, sector_idx, buffer + bytes_read);
-    } else {
-      /* Read sector into bounce buffer, then partially copy
-             into caller's buffer. */
-      if (bounce == NULL) {
-        bounce = malloc(BLOCK_SECTOR_SIZE);
-        if (bounce == NULL)
-          break;
-      }
-      block_read(fs_device, sector_idx, bounce);
-      memcpy(buffer + bytes_read, bounce + sector_ofs, chunk_size);
-    }
+    struct page_cache_way* cache = page_cache_get_cache(sector_idx);
+    if (cache == NULL) // miss
+      cache = page_cache_replace_cache(sector_idx);
+    memcpy(buffer + bytes_read, cache->data[sector_idx&1] + sector_ofs, chunk_size);
+    lock_release(&cache->use);
 
     /* Advance. */
     size -= chunk_size;
     offset += chunk_size;
     bytes_read += chunk_size;
   }
-  free(bounce);
 
   return bytes_read;
 }
@@ -215,7 +337,6 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
 off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t offset) {
   const uint8_t* buffer = buffer_;
   off_t bytes_written = 0;
-  uint8_t* bounce = NULL;
 
   if (inode->deny_write_cnt)
     return 0;
@@ -235,34 +356,17 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
     if (chunk_size <= 0)
       break;
 
-    if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE) {
-      /* Write full sector directly to disk. */
-      block_write(fs_device, sector_idx, buffer + bytes_written);
-    } else {
-      /* We need a bounce buffer. */
-      if (bounce == NULL) {
-        bounce = malloc(BLOCK_SECTOR_SIZE);
-        if (bounce == NULL)
-          break;
-      }
-
-      /* If the sector contains data before or after the chunk
-             we're writing, then we need to read in the sector
-             first.  Otherwise we start with a sector of all zeros. */
-      if (sector_ofs > 0 || chunk_size < sector_left)
-        block_read(fs_device, sector_idx, bounce);
-      else
-        memset(bounce, 0, BLOCK_SECTOR_SIZE);
-      memcpy(bounce + sector_ofs, buffer + bytes_written, chunk_size);
-      block_write(fs_device, sector_idx, bounce);
-    }
+    struct page_cache_way* cache = page_cache_get_cache(sector_idx);
+    if (cache == NULL) // miss
+      cache = page_cache_replace_cache(sector_idx);
+    memcpy(cache->data[sector_idx&1] + sector_ofs, buffer + bytes_written, chunk_size);
+    lock_release(&cache->use);
 
     /* Advance. */
     size -= chunk_size;
     offset += chunk_size;
     bytes_written += chunk_size;
   }
-  free(bounce);
 
   return bytes_written;
 }
