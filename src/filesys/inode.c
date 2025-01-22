@@ -2,10 +2,7 @@
 #include <list.h>
 #include <debug.h>
 #include <round.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <string.h>
-#include "devices/block.h"
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
@@ -131,6 +128,38 @@ void inode_done(void) {
   }
   free(page_cache);
 }
+
+// requirement:
+// extend the size of files (& dirs) (unix fs)
+// (support open, write, close...)
+// inumber (= sector)
+// no external fragmentation (unix fs)
+// Implement file growth
+// error return
+
+// sreuct inode_disk: (inode data)
+// inode_disk start, len, magic.
+// block_sector_t block[120]
+// block_sector_t indirect[4]
+// block_sector_t d_indirect
+// filesize(max) = 512B* (120+128*4+128*128)
+// len will determain the valid of the block
+
+// struct indirect pointer:
+// block_sector_t(u32) [BLOCK_SECTOR_SIZE/4(128)]
+
+// byte_to_sector(ofs):
+// ofs/512 -> sector_ofs
+// if sector_ofs < 120: read inode.sector, get block[sector]
+// sector_ofs -= 120
+// else if sector_ofs < 128*4
+//   read inode.sector, get indirect[(sector_ofs)/128]
+//   read indirect -> buffer, get *(buffer + sector_ofs%128)
+// sector_ofs -= 128*4
+// else
+//   read inode.sector, get d_indirect
+//   read d_indirect -> buffer, get *(buffer + sector_ofs/128)
+//   read it -> buffer, get *(buffer + sector%128)
 
 /* Initializes an inode with LENGTH bytes of data and
    writes the new inode to sector SECTOR on the file system
@@ -296,7 +325,6 @@ static struct page_cache_way* page_cache_replace_cache(block_sector_t address) {
 off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset) {
   uint8_t* buffer = buffer_;
   off_t bytes_read = 0;
-  uint8_t* bounce = NULL;
 
   while (size > 0) {
     /* Disk sector to read, starting byte offset within sector. */
@@ -307,8 +335,6 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
     off_t inode_left = inode_length(inode) - offset;
     int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
     int min_left = inode_left < sector_left ? inode_left : sector_left;
-
-
 
     /* Number of bytes to actually copy out of this sector. */
     int chunk_size = size < min_left ? size : min_left;
@@ -359,6 +385,7 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
     struct page_cache_way* cache = page_cache_get_cache(sector_idx);
     if (cache == NULL) // miss
       cache = page_cache_replace_cache(sector_idx);
+    cache->dirty = true;
     memcpy(cache->data[sector_idx&1] + sector_ofs, buffer + bytes_written, chunk_size);
     lock_release(&cache->use);
 
