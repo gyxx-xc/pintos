@@ -2,10 +2,11 @@
 #define FILESYS_INODE_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "filesys/off_t.h"
 #include "devices/block.h"
 
-struct bitmap;
+#define SECTOR_ERROR UINT32_MAX
 
 void inode_init(void);
 void inode_done(void);

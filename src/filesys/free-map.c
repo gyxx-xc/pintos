@@ -4,6 +4,7 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
+#include "threads/malloc.h"
 
 static struct file* free_map_file; /* Free map file. */
 static struct bitmap* free_map;    /* Free map, one bit per sector. */
@@ -48,6 +49,15 @@ void free_map_open(void) {
   if (!bitmap_read(free_map, free_map_file))
     PANIC("can't read free map");
 }
+
+void* free_map_backup(void) {
+  void* b = malloc(bitmap_buf_size(bitmap_size(free_map)));
+  bitmap_create_in_buf(bitmap_size(free_map), b, bitmap_buf_size(bitmap_size(free_map)));
+  bitmap_copy(b, free_map);
+  return b;
+}
+
+void free_map_restore(void* map) { bitmap_copy(free_map, map); }
 
 /* Writes the free map to disk and closes the free map file. */
 void free_map_close(void) { file_close(free_map_file); }

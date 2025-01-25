@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <round.h>
 #include <stdio.h>
+#include <string.h>
 #include "threads/malloc.h"
 #ifdef FILESYS
 #include "filesys/file.h"
@@ -175,6 +176,11 @@ void bitmap_set_multiple(struct bitmap* b, size_t start, size_t cnt, bool value)
 
   for (i = 0; i < cnt; i++)
     bitmap_set(b, start + i, value);
+}
+
+void bitmap_copy(struct bitmap* a, const struct bitmap* b) {
+  a->bit_cnt = b->bit_cnt;
+  memcpy(a->bits, b->bits, byte_cnt(b->bit_cnt));
 }
 
 /* Returns the number of bits in B between START and START + CNT,
