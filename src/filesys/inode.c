@@ -53,6 +53,7 @@ struct inode {
   int open_cnt;           /* Number of openers. */
   bool removed;           /* True if deleted, false otherwise. */
   int deny_write_cnt;     /* 0: writes ok, >0: deny writes. */
+  struct lock inode_lock;
 };
 
 /* Returns the block device sector that contains byte offset POS
@@ -242,6 +243,7 @@ struct inode* inode_open(block_sector_t sector) {
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
+  lock_init(&inode->inode_lock);
   return inode;
 }
 
@@ -254,6 +256,7 @@ struct inode* inode_reopen(struct inode* inode) {
 
 /* Returns INODE's inode number. */
 block_sector_t inode_get_inumber(const struct inode* inode) { return inode->sector; }
+bool inode_is_removed(const struct inode* inode) { return inode->removed; }
 
 /* Closes INODE and writes it to disk.
    If this was the last reference to INODE, frees its memory.
@@ -306,6 +309,7 @@ void inode_remove(struct inode* inode) {
    Returns the number of bytes actually read, which may be less
    than SIZE if an error occurs or end of file is reached. */
 off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset) {
+  lock_acquire(&inode->inode_lock);
   uint8_t* buffer = buffer_;
   off_t bytes_read = 0;
 
@@ -332,6 +336,7 @@ off_t inode_read_at(struct inode* inode, void* buffer_, off_t size, off_t offset
     offset += chunk_size;
     bytes_read += chunk_size;
   }
+  lock_release(&inode->inode_lock);
 
   return bytes_read;
 }
@@ -348,6 +353,7 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
   if (inode->deny_write_cnt)
     return 0;
 
+  lock_acquire(&inode->inode_lock);
   struct inode_disk block;
   read_sector(inode->sector, &block);
   extend_inode(&block, size+offset-block.length);
@@ -375,7 +381,7 @@ off_t inode_write_at(struct inode* inode, const void* buffer_, off_t size, off_t
     offset += chunk_size;
     bytes_written += chunk_size;
   }
-
+  lock_release(&inode->inode_lock);
   return bytes_written;
 }
 

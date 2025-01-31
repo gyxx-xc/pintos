@@ -44,8 +44,6 @@ void userprog_init(void) {
   t->pcb = calloc(sizeof(struct process), 1);
   success = t->pcb != NULL;
 
-  sema_init(&file_lock, 1);
-
   if (success) {
     lock_init(&t->pcb->pcb_lock);
     list_init(&t->pcb->children);
@@ -136,6 +134,7 @@ static void start_process(void* list) {
     pcb->main_thread = t;
     strlcpy(pcb->process_name, file_name, sizeof pcb->process_name);
     pcb->pid = t->tid;
+    pcb->cwd = dir_reopen(parent->pcb->cwd);
 
     list_init(&pcb->fdt);
 
@@ -365,7 +364,10 @@ void process_exit(int exit_status) {
   for (struct list_elem* f = list_begin(&cur->pcb->fdt);
        f != list_end(&cur->pcb->fdt);) {
     struct fdtable_elem* f_elem = list_entry(f, struct fdtable_elem, elem);
-    file_close(f_elem->file_pointer);
+    if (f_elem->is_dir)
+      dir_close(f_elem->dir_pointer);
+    else
+      file_close(f_elem->file_pointer);
     f = list_remove(f);
     free(f_elem);
   }
@@ -377,6 +379,7 @@ void process_exit(int exit_status) {
   }
 
   file_close(cur->pcb->file); // close & unlock self
+  dir_close(cur->pcb->cwd);
 
   sema_up(&cur->pcb->exited);
   cur->pcb->exit_status = exit_status;
@@ -498,7 +501,7 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
   process_activate();
 
   /* Open executable file. */
-  file = filesys_open(file_name);
+  file = filesys_open_file(file_name);
   if (file == NULL) {
     printf("load: %s: open failed\n", file_name);
     goto done;
@@ -723,7 +726,7 @@ bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread
 pid_t get_pid(struct process* p) { return (pid_t)p->pid; }
 
 /* Gets the file of a process by the given fd */
-struct file* get_file(struct process* pcb, int fd) {
+struct fdtable_elem* get_fd_elem(struct process* pcb, int fd) {
   if (fd == 0 || fd == 1)
     return NULL;
   if (fd > pcb->fd_count)
@@ -731,7 +734,7 @@ struct file* get_file(struct process* pcb, int fd) {
   for (struct list_elem* e = list_begin(&pcb->fdt);
        e != list_end(&pcb->fdt); e = list_next(e)) {
     if (list_entry(e, struct fdtable_elem, elem)->fd == fd) {
-      return list_entry(e, struct fdtable_elem, elem)->file_pointer;
+      return list_entry(e, struct fdtable_elem, elem);
     }
   }
   return NULL;

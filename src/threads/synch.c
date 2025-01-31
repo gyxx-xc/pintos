@@ -178,10 +178,10 @@ void lock_init(struct lock* lock) {
    interrupt handler.  This function may be called with
    interrupts disabled, but interrupts will be turned back on if
    we need to sleep. */
-static bool lock_less_func(const struct list_elem* elem,
-                           const struct list_elem* ins, UNUSED void* aux)
-{return list_entry(elem, struct lock, elem)->donated_priority
-    > list_entry(ins, struct lock, elem)->donated_priority;}
+/* static bool lock_less_func(const struct list_elem* elem, */
+/*                            const struct list_elem* ins, UNUSED void* aux) */
+/* {return list_entry(elem, struct lock, elem)->donated_priority */
+/*     > list_entry(ins, struct lock, elem)->donated_priority;} */
 void lock_acquire(struct lock* lock) {
   ASSERT(lock != NULL);
   ASSERT(!intr_context());
@@ -190,13 +190,13 @@ void lock_acquire(struct lock* lock) {
   struct thread* t = thread_current();
   if (lock->holder != NULL) {
     t->wait_lock = lock;
-    struct lock* i;
-    for (i = t->wait_lock; i != NULL; i = i->holder->wait_lock) {
-      if (i->donated_priority >= thread_help_get_priority(t))
-        break;
-      i->donated_priority = thread_help_get_priority(t);
-      list_sort(&i->holder->acquired_locks, lock_less_func, NULL);
-    }
+    /* struct lock* i; */
+    /* for (i = t->wait_lock; i != NULL; i = i->holder->wait_lock) { */
+    /*   if (i->donated_priority >= thread_help_get_priority(t)) */
+    /*     break; */
+    /*   i->donated_priority = thread_help_get_priority(t); */
+    /*   list_sort(&i->holder->acquired_locks, lock_less_func, NULL); */
+    /* } */
   }
   sema_down(&lock->semaphore);
   lock->holder = thread_current();
@@ -232,15 +232,15 @@ void lock_release(struct lock* lock) {
 
   list_remove(&lock->elem);
   lock->holder = NULL;
-  list_sort(&lock->semaphore.waiters, priority_less_func, NULL);
-  if (list_size(&lock->semaphore.waiters) > 1) {
-    lock->donated_priority =
-      thread_help_get_priority
-      (list_entry(list_front(&lock->semaphore.waiters)->next,
-                  struct thread, elem));
-  } else {
-    lock->donated_priority = -1;
-  }
+  /* list_sort(&lock->semaphore.waiters, priority_less_func, NULL); */
+  /* if (list_size(&lock->semaphore.waiters) > 1) { */
+  /*   lock->donated_priority = */
+  /*     thread_help_get_priority */
+  /*     (list_entry(list_front(&lock->semaphore.waiters)->next, */
+  /*                 struct thread, elem)); */
+  /* } else { */
+  /*   lock->donated_priority = -1; */
+  /* } */
   sema_up(&lock->semaphore);
 }
 

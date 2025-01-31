@@ -24,7 +24,12 @@ struct child_list_elem {
 
 struct fdtable_elem {
   int fd;
-  struct file* file_pointer;
+  bool is_dir;
+  union {
+    struct file* file_pointer;
+    struct dir* dir_pointer;
+  };
+
   struct list_elem elem;
 };
 
@@ -52,6 +57,7 @@ struct process {
 
   /* mine */
   pid_t pid;
+  struct dir* cwd;
   struct file* file;
   // a lock so that only one thread is modifing pcb
   // seems not very elegant?
@@ -89,7 +95,7 @@ void process_activate(void);
 
 bool is_main_thread(struct thread*, struct process*);
 pid_t get_pid(struct process*);
-struct file* get_file(struct process* pcb, int fd);
+struct fdtable_elem* get_fd_elem(struct process* pcb, int fd);
 void* get_sync(struct process* pcb, int sync, bool type);
 
 tid_t pthread_execute(stub_fun, pthread_fun, void*);

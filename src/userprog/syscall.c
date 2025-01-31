@@ -7,13 +7,13 @@
 #include "userprog/process.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/directory.h"
 #include "devices/shutdown.h"
 #include "devices/input.h"
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "lib/float.h"
-
-struct semaphore file_lock;
+#include "filesys/inode.h"
 
 static void syscall_handler(struct intr_frame*);
 
@@ -47,6 +47,7 @@ static void syscall_handler(struct intr_frame* f) {
   /* printf("%d: System call number: %d\n", thread_tid(), args[0]); */
   int fd;
   struct file* file;
+  struct fdtable_elem* f_elem;
   int sync_n;
   void* sync_p;
   switch (args[0]) {
@@ -75,37 +76,35 @@ static void syscall_handler(struct intr_frame* f) {
   case SYS_CREATE: // 4
     check_args(args, 1);
     check_user_string((void*)args[1]);
-    sema_down(&file_lock);
     f->eax = filesys_create((char*)args[1], args[2]);
-    sema_up(&file_lock);
     return;
 
   case SYS_REMOVE: // 5
     check_args(args, 1);
     check_user_string((void*)args[1]);
-    sema_down(&file_lock);
     f->eax = filesys_remove((char*)args[1]);
-    sema_up(&file_lock);
     return;
 
   case SYS_OPEN: // 6
     check_args(args, 1);
     check_user_string((void*)args[1]);
-    sema_down(&file_lock);
-    file = filesys_open((char*)args[1]);
-    sema_up(&file_lock);
+    bool is_dir = filesys_open(&file, (char*)args[1]);
     if (file == NULL) {
       f->eax = -1;
       return;
     }
-    struct fdtable_elem* f_elem = malloc(sizeof(struct fdtable_elem));
+    f_elem = malloc(sizeof(struct fdtable_elem));
     if (f_elem == NULL) {
       f->eax = -1;
       return;
     }
     lock_acquire(&thread_current()->pcb->pcb_lock);
     f_elem->fd = ++thread_current()->pcb->fd_count;
-    f_elem->file_pointer = file;
+    f_elem->is_dir = is_dir;
+    if (is_dir)
+      f_elem->dir_pointer = (struct dir*)file;
+    else
+      f_elem->file_pointer = file;
     list_push_back(&thread_current()->pcb->fdt, &f_elem->elem);
     lock_release(&thread_current()->pcb->pcb_lock);
     f->eax = f_elem->fd;
@@ -115,15 +114,14 @@ static void syscall_handler(struct intr_frame* f) {
     check_args(args, 1);
     fd = args[1];
     lock_acquire(&thread_current()->pcb->pcb_lock);
-    file = get_file(thread_current()->pcb, fd);
-    if (file == NULL) {
+    f_elem = get_fd_elem(thread_current()->pcb, fd);
+    if (f_elem == NULL || f_elem->is_dir) {
       f->eax = -1;
       lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
-    sema_down(&file_lock);
+    file = f_elem->file_pointer;
     f->eax = file_length(file);
-    sema_up(&file_lock);
     lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
@@ -146,16 +144,15 @@ static void syscall_handler(struct intr_frame* f) {
       f->eax = args[3];
     } else {
       lock_acquire(&thread_current()->pcb->pcb_lock);
-      file = get_file(thread_current()->pcb, fd);
-      if (file == NULL) {
+      f_elem = get_fd_elem(thread_current()->pcb, fd);
+      if (f_elem == NULL || f_elem->is_dir) {
         f->eax = -1;
         lock_release(&thread_current()->pcb->pcb_lock);
         free(buffer);
         return;
       }
-      sema_down(&file_lock);
+      file = f_elem->file_pointer;
       f->eax = file_read(file, buffer, args[3]);
-      sema_up(&file_lock);
       lock_release(&thread_current()->pcb->pcb_lock);
     }
     put_user_buff(buffer, (uint8_t*)args[2], f->eax);
@@ -172,15 +169,14 @@ static void syscall_handler(struct intr_frame* f) {
       return;
     } else {
       lock_acquire(&thread_current()->pcb->pcb_lock);
-      file = get_file(thread_current()->pcb, fd);
-      if (file == NULL) {
+      f_elem = get_fd_elem(thread_current()->pcb, fd);
+      if (f_elem == NULL || f_elem->is_dir) {
         f->eax = -1;
         lock_release(&thread_current()->pcb->pcb_lock);
         return;
       }
-      sema_down(&file_lock);
+      file = f_elem->file_pointer;
       f->eax = file_write(file, (void*)args[2], args[3]);
-      sema_up(&file_lock);
       lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
@@ -189,14 +185,14 @@ static void syscall_handler(struct intr_frame* f) {
     check_args(args, 2);
     fd = args[1];
     lock_acquire(&thread_current()->pcb->pcb_lock);
-    file = get_file(thread_current()->pcb, fd);
-    if (file == NULL) {
+    f_elem = get_fd_elem(thread_current()->pcb, fd);
+    if (f_elem == NULL || f_elem->is_dir) {
       f->eax = -1;
+      lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
-    sema_down(&file_lock);
+    file = f_elem->file_pointer;
     file_seek(file, args[2]);
-    sema_up(&file_lock);
     lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
@@ -204,15 +200,14 @@ static void syscall_handler(struct intr_frame* f) {
     check_args(args, 1);
     fd = args[1];
     lock_acquire(&thread_current()->pcb->pcb_lock);
-    file = get_file(thread_current()->pcb, fd);
-    if (file == NULL) {
+    f_elem = get_fd_elem(thread_current()->pcb, fd);
+    if (f_elem == NULL || f_elem->is_dir) {
       f->eax = -1;
       lock_release(&thread_current()->pcb->pcb_lock);
       return;
     }
-    sema_down(&file_lock);
+    file = f_elem->file_pointer;
     f->eax = file_tell(file);
-    sema_up(&file_lock);
     lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
@@ -229,10 +224,13 @@ static void syscall_handler(struct intr_frame* f) {
     for (struct list_elem* e = list_begin(&thread_current()->pcb->fdt);
          e != list_end(&thread_current()->pcb->fdt); e = list_next(e)) {
       if (list_entry(e, struct fdtable_elem, elem)->fd == fd) {
-        sema_down(&file_lock);
-        file_close(list_entry(e, struct fdtable_elem, elem)->file_pointer);
-        sema_up(&file_lock);
+        f_elem = list_entry(e, struct fdtable_elem, elem);
+        if (f_elem->is_dir)
+          dir_close(f_elem->dir_pointer);
+        else
+          file_close(f_elem->file_pointer);
         list_remove(e);
+        free(f_elem);
         lock_release(&thread_current()->pcb->pcb_lock);
         return;
       }
@@ -391,6 +389,66 @@ static void syscall_handler(struct intr_frame* f) {
 
   case SYS_GET_TID: // 24
     f->eax = thread_tid();
+    return;
+
+  case SYS_CHDIR:
+    check_args(args, 1);
+    check_user_string((void*)args[1]);
+    if (!filesys_open(&file, (char*)args[1])) {
+      file_close(file);
+      f->eax = false;
+      return;
+    }
+    if (file == NULL) {
+      f->eax = false;
+      return;
+    }
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    dir_close(thread_current()->pcb->cwd);
+    thread_current()->pcb->cwd = (struct dir*)file;
+    lock_release(&thread_current()->pcb->pcb_lock);
+    f->eax = true;
+    return;
+  case SYS_MKDIR:
+    check_args(args, 1);
+    check_user_string((void*)args[1]);
+    f->eax = filesys_create_dir((char*)args[1]);
+    return;
+  case SYS_READDIR:
+    check_args(args, 2);
+    char part[NAME_MAX+1];
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    f_elem = get_fd_elem(thread_current()->pcb, args[1]);
+    if (f_elem == NULL || !f_elem->is_dir) {
+      f->eax = false;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      return;
+    }
+    f->eax = dir_readdir(f_elem->dir_pointer, part);
+    put_user_buff((uint8_t*)part, (uint8_t*)args[2], sizeof(part));
+    lock_release(&thread_current()->pcb->pcb_lock);
+    return;
+  case SYS_ISDIR:
+    check_args(args, 1);
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    f_elem = get_fd_elem(thread_current()->pcb, args[1]);
+    f->eax = f_elem != NULL && f_elem->is_dir;
+    lock_release(&thread_current()->pcb->pcb_lock);
+    return;
+  case SYS_INUMBER:
+    check_args(args, 1);
+    lock_acquire(&thread_current()->pcb->pcb_lock);
+    f_elem = get_fd_elem(thread_current()->pcb, args[1]);
+    if (f_elem == NULL) {
+      f->eax = -1;
+      lock_release(&thread_current()->pcb->pcb_lock);
+      return;
+    }
+    if (f_elem->is_dir)
+      f->eax = inode_get_inumber(dir_get_inode(f_elem->dir_pointer));
+    else
+      f->eax = inode_get_inumber(file_get_inode(f_elem->file_pointer));
+    lock_release(&thread_current()->pcb->pcb_lock);
     return;
 
   case SYS_PRACTICE: // who cares this number...
